@@ -1,7 +1,6 @@
 #pragma once
 #include "arguments.hpp"
 #include <filesystem>
-#include <map>
 #include <string>
 #include <vector>
 
@@ -12,15 +11,12 @@ struct variant_file final
     std::filesystem::path filepath;
 };
 
-class file_families final
+struct file_family final
 {
-  public:
-    void add_file(const std::string&           file_family_name,
-                  const std::string&           variant_name,
-                  const std::filesystem::path& absolute_path);
-  private:
-    std::map<std::string, std::vector<variant_file>>
-        file_family_name_to_variant_paths_map {};
+    std::string               name {};
+    std::vector<variant_file> variants;
 };
+
+using file_families = std::vector<file_family>;
 
 file_families discover_files(const options& options);
