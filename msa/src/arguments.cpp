@@ -39,3 +39,14 @@ options parse_cli_arguments(int argc, char *argv[])
     exit(1);
   }
 }
+
+std::string render_language(const language &lang)
+{
+  switch (lang)
+  {
+    case language::cpp :
+      return "cpp";
+    case language::java :
+      return "java";
+  };
+}
