@@ -1,27 +1,63 @@
+#pragma once
 #include "tree.hpp"
 #include <filesystem>
+#include <memory>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
-template<class T> struct file_variant final
+struct alignment_token
 {
-    std::string variant;
-    T           filepath;
+    enum class TokenKind
+    {
+      Node,
+      Filler
+    } token_kind;
+    std::shared_ptr<Node> node {};
+    int                   filler_size {};
+
+    inline bool is_filler() const
+    {
+      return token_kind == TokenKind::Filler;
+    }
+
+    inline bool is_node() const
+    {
+      return token_kind == TokenKind::Node;
+    }
 };
 
-template<class T> struct file_family final
+bool operator== (const alignment_token &a, const alignment_token &b);
+
+bool operator!= (const alignment_token &a, const alignment_token &b);
+
+struct hash_count
 {
-    std::string                  name {};
-    std::vector<file_variant<T>> variants;
+    std::unordered_map<size_t, size_t> m {};
+    size_t                             max {};
+
+    inline size_t &operator[] (const size_t &a)
+    {
+      return m[a];
+    }
 };
 
-template<class T> using file_families = std::vector<file_family<T>>;
+using token_table = std::vector<alignment_token>;
 
-using file_variant_path = file_variant<std::filesystem::path>;
-using file_variant_ast  = file_variant<std::shared_ptr<Node>>;
+struct file_variant final
+{
+    std::string                          variant;
+    std::filesystem::path                filepath;
+    std::optional<std::shared_ptr<Node>> ast { std::nullopt };
+    std::optional<token_table>           token_table { std::nullopt };
+    std::optional<std::vector<size_t>>   hashed_ngrams { std::nullopt };
+};
 
-using file_family_path = file_family<std::filesystem::path>;
-using file_family_ast  = file_family<std::shared_ptr<Node>>;
+struct file_family final
+{
+    std::string               name {};
+    std::vector<file_variant> variants;
+};
 
-using file_families_path = file_families<std::filesystem::path>;
-using file_families_ast  = file_families<std::shared_ptr<Node>>;
+using file_families = std::vector<file_family>;

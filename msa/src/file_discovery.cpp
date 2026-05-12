@@ -13,7 +13,7 @@ const std::map<language, std::set<std::string>> language_to_file_suffix_map {
 void add_file_to_map(const std::string           &file_family_name,
                      const std::string           &variant_name,
                      const std::filesystem::path &absolute_path,
-                     std::map<std::string, std::vector<file_variant_path>>
+                     std::map<std::string, std::vector<file_variant>>
                          &file_family_name_to_variant_paths_map)
 {
   if (!file_family_name_to_variant_paths_map.contains(file_family_name))
@@ -29,11 +29,11 @@ void add_file_to_map(const std::string           &file_family_name,
   }
 }
 
-std::vector<file_family_path> transform_to_vector(
-    const std::map<std::string, std::vector<file_variant_path>>
-        &file_family_name_to_variant_paths_map)
+std::vector<file_family>
+    transform_to_vector(const std::map<std::string, std::vector<file_variant>>
+                            &file_family_name_to_variant_paths_map)
 {
-  std::vector<file_family_path> data {
+  std::vector<file_family> data {
     file_family_name_to_variant_paths_map.size()
   };
   for (const auto &key_value : file_family_name_to_variant_paths_map)
@@ -62,9 +62,9 @@ bool is_revelant_file(const fs::directory_entry &file_entry,
   return false;
 }
 
-file_families_path discover_files(const options &options)
+file_families discover_files(const options &options)
 {
-  std::map<std::string, std::vector<file_variant_path>>
+  std::map<std::string, std::vector<file_variant>>
       file_family_name_to_variant_paths_map {};
   for (const auto &directory_entry : fs::directory_iterator(options.path))
   {

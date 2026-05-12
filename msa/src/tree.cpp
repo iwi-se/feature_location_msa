@@ -189,7 +189,7 @@ void Node::calculateSubtreeHashes()
   }
 }
 
-const std::size_t &Node::getSubtreeHash() const
+inline const std::size_t &Node::getSubtreeHash() const
 {
   return subtreeHash;
 }
