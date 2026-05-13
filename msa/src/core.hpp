@@ -45,13 +45,17 @@ struct hash_count
 
 using token_table = std::vector<alignment_token>;
 
-struct file_variant final
+class file_variant final
 {
+  public:
     std::string                          variant;
     std::filesystem::path                filepath;
     std::optional<std::shared_ptr<Node>> ast { std::nullopt };
     std::optional<token_table>           token_table { std::nullopt };
     std::optional<std::vector<size_t>>   hashed_ngrams { std::nullopt };
+
+    file_variant(const file_variant &)             = delete; // never copy
+    file_variant &operator= (const file_variant &) = delete; // never copy
 };
 
 struct file_family final
