@@ -16,29 +16,20 @@ void add_file_to_map(const std::string           &file_family_name,
                      std::map<std::string, std::vector<file_variant>>
                          &file_family_name_to_variant_paths_map)
 {
-  if (!file_family_name_to_variant_paths_map.contains(file_family_name))
-  {
-    file_family_name_to_variant_paths_map[file_family_name] = {
-      { variant_name, absolute_path }
-    };
-  }
-  else
-  {
-    file_family_name_to_variant_paths_map[file_family_name].push_back(
-        { variant_name, absolute_path });
-  }
+  file_family_name_to_variant_paths_map[file_family_name].emplace_back(
+      variant_name, absolute_path);
 }
 
 std::vector<file_family>
-    transform_to_vector(const std::map<std::string, std::vector<file_variant>>
+    transform_to_vector(std::map<std::string, std::vector<file_variant>>
                             &file_family_name_to_variant_paths_map)
 {
-  std::vector<file_family> data {
-    file_family_name_to_variant_paths_map.size()
-  };
-  for (const auto &key_value : file_family_name_to_variant_paths_map)
+  std::vector<file_family> data;
+  data.reserve(file_family_name_to_variant_paths_map.size());
+  for (auto &key_value : file_family_name_to_variant_paths_map)
   {
-    data.push_back({ key_value.first, key_value.second });
+    data.push_back(
+        file_family { key_value.first, std::move(key_value.second) });
   }
   return data;
 }

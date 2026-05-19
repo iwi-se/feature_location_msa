@@ -20,3 +20,9 @@ bool operator!= (const alignment_token &a, const alignment_token &b)
 {
   return !(a == b);
 }
+
+file_variant::file_variant(const std::string           &variant_name,
+                           const std::filesystem::path &filepath)
+    : variant { variant_name }
+    , filepath { filepath }
+{ }

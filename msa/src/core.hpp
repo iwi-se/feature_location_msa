@@ -54,14 +54,22 @@ class file_variant final
     std::optional<token_table>           token_table { std::nullopt };
     std::optional<std::vector<size_t>>   hashed_ngrams { std::nullopt };
 
+    file_variant(const std::string           &variant_name,
+                 const std::filesystem::path &filepath);
     file_variant(const file_variant &)             = delete; // never copy
     file_variant &operator= (const file_variant &) = delete; // never copy
+    file_variant(file_variant &&);                           // only move
 };
 
 struct file_family final
 {
     std::string               name {};
     std::vector<file_variant> variants;
+
+    file_family(const std::string &name, std::vector<file_variant> &&variants);
+    file_family(file_family &&);                           // only move
+    file_family(const file_family &)             = delete; // never copy
+    file_family &operator= (const file_family &) = delete; // never copy
 };
 
 using file_families = std::vector<file_family>;
