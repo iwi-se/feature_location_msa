@@ -1,6 +1,7 @@
 #include "alignment.hpp"
 #include "arguments.hpp"
 #include "file_discovery.hpp"
+#include "postprocessing.hpp"
 #include "preprocessing.hpp"
 #include <algorithm>
 #include <execution>
@@ -21,6 +22,8 @@ int main(int argc, char* argv[])
                   calculate_ngram_hashes(file_family.variants, options);
 
                   align_file_variants(file_family.variants);
+
+                  apply_filler_size(file_family.variants);
                 });
 
   return 0;

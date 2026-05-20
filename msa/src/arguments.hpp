@@ -15,6 +15,7 @@ struct options
     language              language;
     std::filesystem::path path;
     size_t                n_gram_size { 6 };
+    std::filesystem::path output_directory { "output" };
 };
 
 options parse_cli_arguments(int argc, char* argv[]);
