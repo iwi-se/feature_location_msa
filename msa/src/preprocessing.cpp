@@ -3,7 +3,6 @@
 #include "parser.hpp"
 #include <functional>
 #include <iostream>
-#include <string>
 
 void load_asts(std::vector<file_variant> &variants, const options &options)
 {
@@ -29,7 +28,7 @@ std::vector<alignment_token> build_token_table(std::shared_ptr<Node> &ast)
   for (auto &leaf : ast->getLeafs())
   {
     tokenTable.push_back(
-        alignment_token { alignment_token::TokenKind::Node, leaf });
+        alignment_token { alignment_token::token_kind::Node, leaf });
   }
   return tokenTable;
 }

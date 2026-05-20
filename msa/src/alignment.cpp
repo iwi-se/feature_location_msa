@@ -1,7 +1,12 @@
 #include "alignment.hpp"
 #include "arguments.hpp"
+#include "core.hpp"
+#include "preprocessing.hpp"
+#include <algorithm>
+#include <cmath>
 #include <functional>
 #include <unordered_set>
+#include <utility>
 
 size_t count_common_ngrams(const std::vector<size_t>& a,
                            const std::vector<size_t>& b)
@@ -17,6 +22,30 @@ size_t count_common_ngrams(const std::vector<size_t>& a,
     }
   }
   return count;
+}
+
+size_t find_most_similar_element(
+    const std::vector<size_t>& source,
+    const std::vector<std::reference_wrapper<const std::vector<size_t>>>&
+                            hashed_ngrams,
+    const std::set<size_t>& ignore_indices)
+{
+  size_t max_common {};
+  size_t max_index {};
+
+  for (size_t i {}; i < hashed_ngrams.size(); ++i)
+  {
+    if (!ignore_indices.contains(i))
+    {
+      size_t common = count_common_ngrams(source, hashed_ngrams[i]);
+      if (common > max_common)
+      {
+        max_common = common;
+        max_index  = i;
+      }
+    }
+  }
+  return max_index;
 }
 
 std::pair<size_t, size_t> find_most_similar_pair(
@@ -44,59 +73,210 @@ std::pair<size_t, size_t> find_most_similar_pair(
   return { best_i, best_j };
 }
 
-void align_pairwise
+std::vector<size_t> getHashTokens(const std::shared_ptr<Node>& n)
+{
+  std::vector<size_t> result {};
+  result.reserve(1000);
+  for (auto& l : n->getLeafs())
+  {
+    result.emplace_back(l->getSubtreeHash());
+  }
+  return result;
+}
 
-    (std::vector<alignment_token>&       a,
-     std::vector<alignment_token>&       b,
-     const hash_count&                   hashCount,
-     std::unordered_map<size_t, double>& cache)
+size_t scoreLcsCount(const std::vector<size_t>& lcs,
+                     const hash_count&          hash_count)
+{
+  size_t score {};
+  for (auto& tok : lcs)
+  {
+    score
+        += hash_count.max + 1 - std::min(hash_count.m.at(tok), hash_count.max);
+  }
+  return score;
+}
+
+size_t calculateCommonAncestorProximity(std::shared_ptr<Node> node1,
+                                        std::shared_ptr<Node> node2)
+{
+  size_t distance { 0 };
+  while (node1 != nullptr)
+  {
+    node1 = node1->getParent();
+    size_t innerDistance { 0 };
+    auto   tempNode2 { node2 };
+    while (tempNode2 != nullptr)
+    {
+      tempNode2 = tempNode2->getParent();
+      if (node1 != nullptr && tempNode2 != nullptr
+          && node1->getTag() == tempNode2->getTag())
+      {
+        return innerDistance + distance;
+      }
+      innerDistance++;
+    }
+    distance++;
+  }
+  throw std::logic_error("Nodes have no common ancestor");
+}
+
+std::vector<size_t> commonTokens(const std::vector<size_t>& a,
+                                 const std::vector<size_t>& b)
 {
   if (a == b)
+  {
+    return a;
+  }
+  std::unordered_set<size_t> b_set { b.begin(), b.end() };
+
+  std::vector<size_t> result;
+  for (const auto& tok : a)
+  {
+    if (b_set.find(tok) != b_set.end())
+    {
+      result.push_back(tok);
+    }
+  }
+  return result;
+}
+
+double subtreeSimilarity(const std::shared_ptr<Node>&        n1,
+                         const std::shared_ptr<Node>&        n2,
+                         const hash_count&                   hashCount,
+                         std::unordered_map<size_t, double>& cache)
+{
+  size_t subtreeHashPair { n1->getSubtreeHash() ^ n2->getSubtreeHash() };
+
+  if (cache.find(subtreeHashPair) != cache.end())
+  {
+    return cache[subtreeHashPair];
+  }
+
+  double result {};
+  if (n1->getSubtreeHash() == n2->getSubtreeHash())
+  {
+    result += 1;
+  }
+  else
+  {
+    auto                n1Leaves { getHashTokens(n1) };
+    auto                n2Leaves { getHashTokens(n2) };
+    auto                n1LeavesScore { scoreLcsCount(n1Leaves, hashCount) };
+    auto                n2LeavesScore { scoreLcsCount(n2Leaves, hashCount) };
+    std::vector<size_t> lcsResult {};
+    if (FAST)
+    {
+      lcsResult = commonTokens(n1Leaves, n2Leaves);
+    }
+    else
+    {
+      // lcsResult = lcs(n1Leaves, n2Leaves).lcs;
+    }
+    auto lcsScore { scoreLcsCount(lcsResult, hashCount) };
+    result = (static_cast<double>(lcsScore)
+              / static_cast<double>(std::max(n1LeavesScore, n2LeavesScore)));
+  }
+
+  cache.insert({ subtreeHashPair, result });
+  return result;
+}
+
+double ancestorSimilarity(std::shared_ptr<Node>               n1,
+                          std::shared_ptr<Node>               n2,
+                          const hash_count&                   hashCount,
+                          std::unordered_map<size_t, double>& cache)
+{
+  if (n1 == nullptr || n2 == nullptr || n1->getParent() == nullptr
+      || n2->getParent() == nullptr)
+  {
+    return 0;
+  }
+
+  auto   n1Orig { n1 };
+  double result {};
+  double level { 1 };
+  if (n1->getParent()->getTag() != n2->getParent()->getTag())
+  {
+    result += std::pow(
+        static_cast<double>(calculateCommonAncestorProximity(n1, n2)) + 1.0,
+        -2);
+  }
+  else
+  {
+    while (level < 5)
+    {
+      n1        = n1->getParent();
+      n2        = n2->getParent();
+      auto temp = (std::pow(level, -0.5))
+                  * subtreeSimilarity(n1, n2, hashCount, cache) * 10;
+
+      result += temp;
+
+      ++level;
+
+      if (n1->getParent() == nullptr || n2->getParent() == nullptr)
+      {
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+double score(const alignment_token&              a,
+             const alignment_token&              b,
+             const hash_count&                   hashCount,
+             std::unordered_map<size_t, double>& cache)
+{
+  if (a.token_kind == alignment_token::token_kind::Filler
+      || b.token_kind == alignment_token::token_kind::Filler)
+  {
+    return -100.0;
+  }
+  if (a.node->getSubtreeHash() == b.node->getSubtreeHash())
+  {
+    return ancestorSimilarity(a.node, b.node, hashCount, cache);
+  };
+  return -100.0;
+}
+
+void align_pairwise(std::vector<alignment_token>&       seq1,
+                    std::vector<alignment_token>&       seq2,
+                    const hash_count&                   hashCount,
+                    std::unordered_map<size_t, double>& cache)
+{
+  if (seq1 == seq2)
   {
     return;
   }
   else
   {
-    const auto& seq1 = a;
-    const auto& seq2 = b;
-
     size_t len1 = seq1.size();
     size_t len2 = seq2.size();
 
-    vector<vector<double>> dp(len1 + 1, vector<double>(len2 + 1, 0));
+    std::vector<std::vector<double>> dp(len1 + 1,
+                                        std::vector<double>(len2 + 1, 0));
 
-    // Initialize the scoring matrix
-    for (size_t k = 0; k <= len1; ++k)
-    {
-      dp[k][0] = GAP * k;
-    }
-    for (size_t k = 0; k <= len2; ++k)
-    {
-      dp[0][k] = GAP * k;
-    }
-
-    // Fill the scoring matrix
     for (size_t k = 1; k <= len1; ++k)
     {
       for (size_t l = 1; l <= len2; ++l)
       {
         double matchScore = dp[k - 1][l - 1]
                             + score(seq1[k - 1], seq2[l - 1], hashCount, cache);
-        double deleteScore = dp[k - 1][l] + GAP;
-        double insertScore = dp[k][l - 1] + GAP;
+        double deleteScore = dp[k - 1][l];
+        double insertScore = dp[k][l - 1];
 
         dp[k][l] = std::max({ matchScore, deleteScore, insertScore });
-        // std::cout << matchScore << " ";
       }
-      // std::cout << std::endl;
     }
 
-    // Backtrack to find the alignment
-    vector<AlignmentToken> alignedSeq1;
-    vector<AlignmentToken> alignedSeq2;
+    size_t                       max_len { seq1.size() + seq2.size() };
+    std::vector<alignment_token> alignedSeq1(max_len);
+    std::vector<alignment_token> alignedSeq2(max_len);
 
-    size_t k = len1;
-    size_t l = len2;
+    size_t k { len1 };
+    size_t l { len2 };
+    size_t m { max_len };
 
     while (k > 0 || l > 0)
     {
@@ -105,45 +285,146 @@ void align_pairwise
                  == dp[k - 1][l - 1]
                         + score(seq1[k - 1], seq2[l - 1], hashCount, cache))
       {
-        alignedSeq1.push_back(seq1[k - 1]);
-        alignedSeq2.push_back(seq2[l - 1]);
+        alignedSeq1[--m] = seq1[k - 1];
+        alignedSeq2[--m] = seq2[l - 1];
         --k;
         --l;
       }
-      else if (k > 0 && dp[k][l] == dp[k - 1][l] + GAP)
+      else if (k > 0 && dp[k][l] == dp[k - 1][l])
       {
-        alignedSeq1.push_back(seq1[k - 1]);
-        alignedSeq2.push_back(FILLER);
+        alignedSeq1[--m] = seq1[k - 1];
+        alignedSeq2[--m] = FILLER;
         --k;
       }
-      else if (l > 0 && dp[k][l] == dp[k][l - 1] + GAP)
+      else if (l > 0 && dp[k][l] == dp[k][l - 1])
       {
-        alignedSeq1.push_back(FILLER);
-        alignedSeq2.push_back(seq2[l - 1]);
+        alignedSeq1[--m] = FILLER;
+        alignedSeq2[--m] = seq2[l - 1];
         --l;
       }
     }
-    std::reverse(alignedSeq1.begin(), alignedSeq1.end());
-    std::reverse(alignedSeq2.begin(), alignedSeq2.end());
 
-    return make_pair(alignedSeq1, alignedSeq2);
+    std::move(alignedSeq1.begin() + m, alignedSeq1.end(), alignedSeq1.begin());
+    alignedSeq1.resize(alignedSeq1.size() - m);
+
+    std::move(alignedSeq2.begin() + m, alignedSeq2.end(), alignedSeq2.begin());
+    alignedSeq2.resize(alignedSeq2.size() - m);
+
+    seq1 = std::move(alignedSeq1);
+    seq2 = std::move(alignedSeq2);
   }
 }
 
-alignment align_file_variants(std::vector<file_variant>& variants,
-                              const options&             options)
+std::vector<alignment_token> merge_aligned_sequences(
+    const std::vector<std::vector<alignment_token>*>& sequences)
+{
+  if (sequences.empty())
+  {
+    return {};
+  }
+
+  size_t num_sequences = sequences.size();
+  size_t length        = sequences[0]->size();
+
+  // Ensure all sequences are the same length
+  for (const auto& seq : sequences)
+  {
+    if (seq->size() != length)
+    {
+      throw std::invalid_argument("All sequences must have the same length");
+    }
+  }
+
+  std::vector<alignment_token> merged;
+  merged.reserve(length);
+
+  // Iterate column by column
+  for (size_t pos = 0; pos < length; ++pos)
+  {
+    for (size_t seq_idx = 0; seq_idx < num_sequences; ++seq_idx)
+    {
+      const auto& token { (*sequences[seq_idx])[pos] };
+      if (!token.is_filler())
+      {
+        merged.push_back(token);
+        break; // move to next column
+      }
+    }
+  }
+
+  return merged;
+}
+
+void realign_aligned_sequence(
+    std::vector<std::vector<alignment_token>*>& aligned_sequences,
+    const std::vector<alignment_token>&         merged_sequence)
+{
+  for (auto sequence : aligned_sequences)
+  {
+    std::vector<alignment_token> realigned_sequence {};
+    realigned_sequence.reserve(merged_sequence.size());
+    size_t k {};
+    for (size_t i {}; i < merged_sequence.size(); ++i)
+    {
+      if (merged_sequence[i] == (*sequence)[k])
+      {
+        realigned_sequence.push_back((*sequence)[k]);
+        ++k;
+      }
+      else
+      {
+        realigned_sequence.push_back(FILLER);
+      }
+    }
+    *sequence = std::move(realigned_sequence);
+  }
+}
+
+void align_file_variants(std::vector<file_variant>& variants,
+                         const options&             options)
 {
   std::vector<std::reference_wrapper<const std::vector<size_t>>> ngram_hashes;
   for (const auto& variant : variants)
   {
     ngram_hashes.push_back(*variant.hashed_ngrams);
   }
+  auto                               hash_count { build_hash_count(variants) };
+  std::unordered_map<size_t, double> cache {};
 
   auto most_similar_pair_indices { find_most_similar_pair(ngram_hashes,
                                                           options) };
 
-  // align it
-  // in a loop:
-  // -- find next most similar pair
-  // -- align it
+  align_pairwise(*variants[most_similar_pair_indices.first].token_table,
+                 *variants[most_similar_pair_indices.second].token_table,
+                 hash_count,
+                 cache);
+
+  std::vector<std::vector<alignment_token>*> aligned_sequences {
+    &(*variants[most_similar_pair_indices.first].token_table),
+    &(*variants[most_similar_pair_indices.first].token_table)
+  };
+  std::set<size_t> used_indices { most_similar_pair_indices.first,
+                                  most_similar_pair_indices.second };
+
+  while (used_indices.size() < variants.size())
+  {
+    auto   merged { merge_aligned_sequences(aligned_sequences) };
+    auto   merged_ngram_hashes { hash_ngrams(
+        calculate_ngrams(merged, options.n_gram_size)) };
+    size_t next_most_similar_index { find_most_similar_element(
+        merged_ngram_hashes, ngram_hashes, used_indices) };
+
+    align_pairwise(merged,
+                   *variants[next_most_similar_index].token_table,
+                   hash_count,
+                   cache);
+
+    used_indices.insert(next_most_similar_index);
+
+    realign_aligned_sequence(aligned_sequences,
+                             *variants[next_most_similar_index].token_table);
+
+    aligned_sequences.push_back(
+        &(*variants[next_most_similar_index].token_table));
+  }
 }

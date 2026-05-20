@@ -9,7 +9,7 @@
 
 struct alignment_token
 {
-    enum class TokenKind
+    enum class token_kind
     {
       Node,
       Filler
@@ -19,14 +19,16 @@ struct alignment_token
 
     inline bool is_filler() const
     {
-      return token_kind == TokenKind::Filler;
+      return token_kind == token_kind::Filler;
     }
 
     inline bool is_node() const
     {
-      return token_kind == TokenKind::Node;
+      return token_kind == token_kind::Node;
     }
 };
+
+const alignment_token FILLER = { alignment_token::token_kind::Filler, nullptr };
 
 bool operator== (const alignment_token &a, const alignment_token &b);
 

@@ -2,6 +2,8 @@
 #include <filesystem>
 #include <string>
 
+constexpr bool FAST { true };
+
 enum class language
 {
   cpp,
@@ -12,7 +14,6 @@ struct options
 {
     language              language;
     std::filesystem::path path;
-    bool                  fast { true };
     size_t                n_gram_size { 6 };
 };
 
