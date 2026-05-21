@@ -53,7 +53,7 @@ class file_variant final
     std::string                          variant;
     std::filesystem::path                filepath;
     std::optional<std::shared_ptr<Node>> ast { std::nullopt };
-    std::optional<token_table>           token_table { std::nullopt };
+    std::optional<token_table>           m_token_table { std::nullopt };
     std::optional<std::vector<size_t>>   hashed_ngrams { std::nullopt };
 
     file_variant(const std::string           &variant_name,

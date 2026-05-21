@@ -11,7 +11,7 @@ void load_asts(std::vector<file_variant> &variants, const options &options)
     try
     {
       auto ast { parseFile(file_variant.filepath,
-                           render_language(options.language)) };
+                           render_language(options.m_language)) };
       file_variant.ast = ast;
     }
     catch (...)
@@ -39,7 +39,7 @@ void build_token_tables(std::vector<file_variant> &variants)
   {
     if (variant.ast)
     {
-      variant.token_table = build_token_table(*variant.ast);
+      variant.m_token_table = build_token_table(*variant.ast);
     }
   }
 }
@@ -49,12 +49,12 @@ hash_count build_hash_count(std::vector<file_variant> &variants)
   hash_count hash_count;
   for (auto &variant : variants)
   {
-    if (!variant.token_table)
+    if (!variant.m_token_table)
     {
       continue;
     }
 
-    for (const auto &alignment_token : *variant.token_table)
+    for (const auto &alignment_token : *variant.m_token_table)
     {
       if (alignment_token.is_node())
       {
@@ -120,6 +120,6 @@ void calculate_ngram_hashes(std::vector<file_variant> &variants,
   for (auto &variant : variants)
   {
     variant.hashed_ngrams = hash_ngrams(
-        calculate_ngrams(*variant.token_table, options.n_gram_size));
+        calculate_ngrams(*variant.m_token_table, options.n_gram_size));
   }
 }

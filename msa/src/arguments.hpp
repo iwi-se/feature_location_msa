@@ -12,7 +12,7 @@ enum class language
 
 struct options
 {
-    language              language;
+    language              m_language;
     std::filesystem::path path;
     size_t                n_gram_size { 6 };
     std::filesystem::path output_directory { "output" };

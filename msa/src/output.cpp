@@ -44,7 +44,7 @@ void write_human_output(const file_family &file_family, const options &options)
       outputFile << file.filepath.string();
       outputFile << "\n";
 
-      auto &seq { *file.token_table };
+      auto &seq { *file.m_token_table };
       for (const auto &tok : seq)
       {
         outputFile << render_token(tok);
@@ -75,7 +75,7 @@ void write_machine_output(const file_family &file_family,
       // outputFile << variant << "\n";
       outputFile << variant.filepath.string();
       outputFile << "\n";
-      for (const auto &tok : *variant.token_table)
+      for (const auto &tok : *variant.m_token_table)
       {
         if (tok.is_filler())
         {

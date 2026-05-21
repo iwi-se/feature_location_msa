@@ -394,14 +394,14 @@ void align_file_variants(std::vector<file_variant>& variants,
   auto most_similar_pair_indices { find_most_similar_pair(ngram_hashes,
                                                           options) };
 
-  align_pairwise(*variants[most_similar_pair_indices.first].token_table,
-                 *variants[most_similar_pair_indices.second].token_table,
+  align_pairwise(*variants[most_similar_pair_indices.first].m_token_table,
+                 *variants[most_similar_pair_indices.second].m_token_table,
                  hash_count,
                  cache);
 
   std::vector<std::vector<alignment_token>*> aligned_sequences {
-    &(*variants[most_similar_pair_indices.first].token_table),
-    &(*variants[most_similar_pair_indices.first].token_table)
+    &(*variants[most_similar_pair_indices.first].m_token_table),
+    &(*variants[most_similar_pair_indices.first].m_token_table)
   };
   std::set<size_t> used_indices { most_similar_pair_indices.first,
                                   most_similar_pair_indices.second };
@@ -415,16 +415,16 @@ void align_file_variants(std::vector<file_variant>& variants,
         merged_ngram_hashes, ngram_hashes, used_indices) };
 
     align_pairwise(merged,
-                   *variants[next_most_similar_index].token_table,
+                   *variants[next_most_similar_index].m_token_table,
                    hash_count,
                    cache);
 
     used_indices.insert(next_most_similar_index);
 
     realign_aligned_sequence(aligned_sequences,
-                             *variants[next_most_similar_index].token_table);
+                             *variants[next_most_similar_index].m_token_table);
 
     aligned_sequences.push_back(
-        &(*variants[next_most_similar_index].token_table));
+        &(*variants[next_most_similar_index].m_token_table));
   }
 }

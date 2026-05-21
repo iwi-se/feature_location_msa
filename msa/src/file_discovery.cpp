@@ -88,7 +88,7 @@ file_families discover_files(const options &options)
     for (const auto &file_entry :
          fs::recursive_directory_iterator(directory_entry))
     {
-      if (!is_revelant_file(file_entry, options.language))
+      if (!is_revelant_file(file_entry, options.m_language))
       {
         continue;
       }

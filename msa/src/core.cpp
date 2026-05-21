@@ -26,3 +26,14 @@ file_variant::file_variant(const std::string           &variant_name,
     : variant { variant_name }
     , filepath { filepath }
 { }
+
+file_family::file_family(const std::string          &name,
+                         std::vector<file_variant> &&variants)
+    : name { name }
+    , variants { std::move(variants) }
+{ }
+
+file_family::file_family(file_family &&other)
+    : name { other.name }
+    , variants { std::move(other.variants) }
+{ }

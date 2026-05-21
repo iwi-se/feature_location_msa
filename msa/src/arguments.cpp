@@ -48,5 +48,7 @@ std::string render_language(const language &lang)
       return "cpp";
     case language::java :
       return "java";
+    default :
+      return "unknown";
   };
 }
