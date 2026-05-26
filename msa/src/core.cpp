@@ -1,4 +1,5 @@
 #include "core.hpp"
+#include <optional>
 
 bool operator== (const alignment_token &a, const alignment_token &b)
 {
@@ -26,6 +27,29 @@ file_variant::file_variant(const std::string           &variant_name,
     : variant { variant_name }
     , filepath { filepath }
 { }
+
+file_variant::file_variant(file_variant &&other)
+    : variant { other.variant }
+    , filepath { other.filepath }
+{
+  if (other.ast)
+  {
+    this->ast = std::move(*other.ast);
+    other.ast = std::nullopt;
+  }
+
+  if (other.m_token_table)
+  {
+    this->m_token_table = std::move(*other.m_token_table);
+    other.m_token_table = std::nullopt;
+  }
+
+  if (other.hashed_ngrams)
+  {
+    this->hashed_ngrams = std::move(*other.hashed_ngrams);
+    other.hashed_ngrams = std::nullopt;
+  }
+}
 
 file_family::file_family(const std::string          &name,
                          std::vector<file_variant> &&variants)

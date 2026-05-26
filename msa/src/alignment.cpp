@@ -1,5 +1,4 @@
 #include "alignment.hpp"
-#include "arguments.hpp"
 #include "core.hpp"
 #include "preprocessing.hpp"
 #include <algorithm>

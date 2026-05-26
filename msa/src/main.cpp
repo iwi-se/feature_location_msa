@@ -21,7 +21,7 @@ int main(int argc, char* argv[])
                   build_token_tables(file_family.variants);
                   calculate_ngram_hashes(file_family.variants, options);
 
-                  align_file_variants(file_family.variants);
+                  align_file_variants(file_family.variants, options);
 
                   apply_filler_size(file_family.variants);
                 });
