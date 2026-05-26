@@ -1,5 +1,4 @@
 #include "output.hpp"
-#include "arguments.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -33,7 +32,7 @@ std::string render_token(const alignment_token &t)
 void write_human_output(const file_family &file_family, const options &options)
 {
   std::string outputFilePath
-      = options.output_directory / file_family.name / ".txt";
+      = options.output_directory / (file_family.name + ".txt");
 
   std::ofstream outputFile(outputFilePath);
   if (outputFile.is_open())
@@ -64,7 +63,7 @@ void write_machine_output(const file_family &file_family,
                           const options     &options)
 {
   std::string outputFilePath
-      = options.output_directory / file_family.name / ".output";
+      = options.output_directory / (file_family.name + ".output");
 
   std::ofstream outputFile(outputFilePath);
   if (outputFile.is_open())

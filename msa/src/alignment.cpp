@@ -1,9 +1,11 @@
 #include "alignment.hpp"
 #include "core.hpp"
+#include "helper.hpp"
 #include "preprocessing.hpp"
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <iostream>
 #include <unordered_set>
 #include <utility>
 
@@ -279,26 +281,27 @@ void align_pairwise(std::vector<alignment_token>&       seq1,
 
     while (k > 0 || l > 0)
     {
+      --m;
       if (k > 0 && l > 0
           && dp[k][l]
                  == dp[k - 1][l - 1]
                         + score(seq1[k - 1], seq2[l - 1], hashCount, cache))
       {
-        alignedSeq1[--m] = seq1[k - 1];
-        alignedSeq2[--m] = seq2[l - 1];
+        alignedSeq1[m] = seq1[k - 1];
+        alignedSeq2[m] = seq2[l - 1];
         --k;
         --l;
       }
       else if (k > 0 && dp[k][l] == dp[k - 1][l])
       {
-        alignedSeq1[--m] = seq1[k - 1];
-        alignedSeq2[--m] = FILLER;
+        alignedSeq1[m] = seq1[k - 1];
+        alignedSeq2[m] = FILLER;
         --k;
       }
       else if (l > 0 && dp[k][l] == dp[k][l - 1])
       {
-        alignedSeq1[--m] = FILLER;
-        alignedSeq2[--m] = seq2[l - 1];
+        alignedSeq1[m] = FILLER;
+        alignedSeq2[m] = seq2[l - 1];
         --l;
       }
     }
@@ -365,14 +368,14 @@ void realign_aligned_sequence(
     size_t k {};
     for (size_t i {}; i < merged_sequence.size(); ++i)
     {
-      if (merged_sequence[i] == (*sequence)[k])
+      if (merged_sequence[i].is_filler())
       {
-        realigned_sequence.push_back((*sequence)[k]);
-        ++k;
+        realigned_sequence.push_back(FILLER);
       }
       else
       {
-        realigned_sequence.push_back(FILLER);
+        realigned_sequence.push_back((*sequence)[k]);
+        ++k;
       }
     }
     *sequence = std::move(realigned_sequence);
@@ -400,7 +403,7 @@ void align_file_variants(std::vector<file_variant>& variants,
 
   std::vector<std::vector<alignment_token>*> aligned_sequences {
     &(*variants[most_similar_pair_indices.first].m_token_table),
-    &(*variants[most_similar_pair_indices.first].m_token_table)
+    &(*variants[most_similar_pair_indices.second].m_token_table)
   };
   std::set<size_t> used_indices { most_similar_pair_indices.first,
                                   most_similar_pair_indices.second };
@@ -420,8 +423,7 @@ void align_file_variants(std::vector<file_variant>& variants,
 
     used_indices.insert(next_most_similar_index);
 
-    realign_aligned_sequence(aligned_sequences,
-                             *variants[next_most_similar_index].m_token_table);
+    realign_aligned_sequence(aligned_sequences, merged);
 
     aligned_sequences.push_back(
         &(*variants[next_most_similar_index].m_token_table));

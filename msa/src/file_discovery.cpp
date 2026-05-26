@@ -44,9 +44,9 @@ bool is_revelant_file(const fs::directory_entry &file_entry,
   }
 
   const auto  file_suffixes { language_to_file_suffix_map.at(language) };
-  std::string suffix_without_dot {
-    file_entry.path().extension().string().substr(1)
-  };
+  std::string extension { file_entry.path().extension().string() };
+
+  std::string suffix_without_dot { extension == "" ? "" : extension.substr(1) };
   if (file_suffixes.contains(suffix_without_dot))
   {
     return true;

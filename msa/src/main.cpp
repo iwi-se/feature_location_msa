@@ -1,6 +1,7 @@
 #include "alignment.hpp"
 #include "arguments.hpp"
 #include "file_discovery.hpp"
+#include "output.hpp"
 #include "postprocessing.hpp"
 #include "preprocessing.hpp"
 #include <algorithm>
@@ -24,6 +25,8 @@ int main(int argc, char* argv[])
                   align_file_variants(file_family.variants, options);
 
                   apply_filler_size(file_family.variants);
+
+                  output(file_family, options);
                 });
 
   return 0;

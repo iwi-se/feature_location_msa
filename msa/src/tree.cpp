@@ -189,11 +189,6 @@ void Node::calculateSubtreeHashes()
   }
 }
 
-inline const std::size_t &Node::getSubtreeHash() const
-{
-  return subtreeHash;
-}
-
 std::shared_ptr<Node> Node::getChildByTag(const std::string &tag)
 {
   for (const auto &child : children)

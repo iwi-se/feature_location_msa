@@ -5,6 +5,8 @@ project(feature_location_msa LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_compile_options(-O3)
+
 find_library(TBB tbb)
 find_library(TREE_SITTER_LIB tree-sitter)
 find_library(TREE_SITTER_CPP_LIB tree-sitter-cpp)

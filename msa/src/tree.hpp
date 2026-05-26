@@ -48,7 +48,12 @@ class Node: public std::enable_shared_from_this<Node>
     bool                               isLeaf() const;
     std::vector<std::shared_ptr<Node>> getPointerToEveryNode();
     void                               calculateSubtreeHashes();
-    const std::size_t                 &getSubtreeHash() const;
+
+    inline const std::size_t &getSubtreeHash() const
+    {
+      return subtreeHash;
+    }
+
     const int                         &getConnectedLeafWeight();
     bool                               isAncestorOf(std::shared_ptr<Node> node);
     std::vector<std::shared_ptr<Node>> getAncestors();
