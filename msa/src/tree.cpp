@@ -4,133 +4,133 @@
 #include <memory>
 #include <stack>
 
-std::filesystem::path SourcePosition::getFile() const
+std::filesystem::path node_position::get_file() const
 {
   return file;
 }
 
-std::pair<size_t, size_t> SourcePosition::getStartPosition() const
+std::pair<size_t, size_t> node_position::get_start_position() const
 {
-  return startPosition;
+  return start_position;
 }
 
-size_t SourcePosition::getStartLine() const
+size_t node_position::get_start_line() const
 {
-  return startPosition.first;
+  return start_position.first;
 }
 
-size_t SourcePosition::getStartColumn() const
+size_t node_position::get_start_column() const
 {
-  return startPosition.second;
+  return start_position.second;
 }
 
-std::pair<size_t, size_t> SourcePosition::getEndPosition() const
+std::pair<size_t, size_t> node_position::get_end_position() const
 {
-  return endPosition;
+  return end_position;
 }
 
-size_t SourcePosition::getEndLine() const
+size_t node_position::get_end_line() const
 {
-  return endPosition.first;
+  return end_position.first;
 }
 
-size_t SourcePosition::getEndColumn() const
+size_t node_position::get_end_column() const
 {
-  return endPosition.second;
+  return end_position.second;
 }
 
-bool SourcePosition::operator< (const SourcePosition &other) const
+bool node_position::operator< (const node_position &other) const
 {
-  return startPosition < other.startPosition;
+  return start_position < other.start_position;
 }
 
-bool SourcePosition::operator== (const SourcePosition &other) const
+bool node_position::operator== (const node_position &other) const
 {
-  return startPosition == other.startPosition
-         && endPosition == other.endPosition && file == other.file;
+  return start_position == other.start_position
+         && end_position == other.end_position && file == other.file;
 }
 
-std::string SourcePosition::render() const
+std::string node_position::render() const
 {
-  return file.string() + "/" + std::to_string(startPosition.first) + ":"
-         + std::to_string(startPosition.second) + "-"
-         + std::to_string(endPosition.first) + ":"
-         + std::to_string(endPosition.second);
+  return file.string() + "/" + std::to_string(start_position.first) + ":"
+         + std::to_string(start_position.second) + "-"
+         + std::to_string(end_position.first) + ":"
+         + std::to_string(end_position.second);
 }
 
-Node::Node(const std::string    &tag,
-           const std::string    &tsText,
-           const std::string    &tsType,
-           const bool           &tsIsNamed,
-           const SourcePosition &sourcePosition)
+node_t::node_t(const std::string   &tag,
+               const std::string   &ts_text,
+               const std::string   &ts_type,
+               const bool          &ts_is_named,
+               const node_position &m_node_position_p)
     : tag(tag)
-    , tsText(tsText)
-    , tsType(tsType)
-    , tsIsNamed(tsIsNamed)
-    , sourcePosition(sourcePosition)
+    , ts_text(ts_text)
+    , ts_type(ts_type)
+    , ts_is_named(ts_is_named)
+    , m_node_position(m_node_position_p)
 { }
 
-const std::string &Node::getTag() const
+const std::string &node_t::get_tag() const
 {
   return tag;
 }
 
-const std::string &Node::getTsText() const
+const std::string &node_t::get_ts_text() const
 {
-  return tsText;
+  return ts_text;
 }
 
-const int &Node::getConnectedLeafWeight()
+const int &node_t::get_connected_leaf_weight()
 {
-  if (connectedLeafWeight == 0)
+  if (connected_leaf_weight == 0)
   {
-    if (isLeaf())
+    if (is_leaf())
     {
       if (tag == "identifier")
       {
-        connectedLeafWeight = 3;
+        connected_leaf_weight = 3;
       }
-      else if (tsIsNamed)
+      else if (ts_is_named)
       {
-        connectedLeafWeight = 2;
+        connected_leaf_weight = 2;
       }
       else
       {
-        connectedLeafWeight = 1;
+        connected_leaf_weight = 1;
       }
     }
     else
     {
       for (auto &child : children)
       {
-        connectedLeafWeight += child->getConnectedLeafWeight();
+        connected_leaf_weight += child->get_connected_leaf_weight();
       }
     }
   }
-  return connectedLeafWeight;
+  return connected_leaf_weight;
 }
 
-void Node::addChild(std::shared_ptr<Node> child)
+void node_t::add_child(std::shared_ptr<node_t> child)
 {
   children.push_back(child);
-  child->setParent(weak_from_this());
+  child->set_parent(weak_from_this());
 }
 
-void Node::setParent(std::weak_ptr<Node> parent)
+void node_t::set_parent(std::weak_ptr<node_t> parent)
 {
   this->parent = parent;
 }
 
-void Node::render(const int &whitespace) const
+void node_t::render(const int &whitespace) const
 {
   for (int i = 0; i < whitespace; i++)
   {
     std::cout << " ";
   }
   std::cout << tag;
-  if (isLeaf())
+  if (is_leaf())
   {
-    std::cout << ": \"" << tsText << "\"";
+    std::cout << ": \"" << ts_text << "\"";
   }
   std::cout << std::endl;
   for (auto &child : children)
@@ -139,15 +139,15 @@ void Node::render(const int &whitespace) const
   }
 }
 
-bool Node::isLeaf() const
+bool node_t::is_leaf() const
 {
   return children.empty();
 }
 
-std::vector<std::shared_ptr<Node>> Node::getPointerToEveryNode()
+std::vector<std::shared_ptr<node_t>> node_t::get_pointer_to_every_node()
 {
-  std::vector<std::shared_ptr<Node>> nodes;
-  std::stack<std::shared_ptr<Node>>  stack;
+  std::vector<std::shared_ptr<node_t>> nodes;
+  std::stack<std::shared_ptr<node_t>>  stack;
   stack.push(shared_from_this());
 
   while (!stack.empty())
@@ -166,34 +166,34 @@ std::vector<std::shared_ptr<Node>> Node::getPointerToEveryNode()
   return nodes;
 }
 
-void Node::calculateSubtreeHashes()
+void node_t::calculate_subtree_hashes()
 {
-  if (subtreeHash == 0)
+  if (subtree_hash == 0)
   {
     std::string temp_hash;
     temp_hash = tag;
-    if (isLeaf())
+    if (is_leaf())
     {
-      temp_hash += tsText;
+      temp_hash += ts_text;
     }
     for (auto &child : children)
     {
-      child->calculateSubtreeHashes();
-      temp_hash.append(std::to_string(child->getSubtreeHash()));
+      child->calculate_subtree_hashes();
+      temp_hash.append(std::to_string(child->get_subtree_hash()));
     }
-    subtreeHash = std::hash<std::string> {}(temp_hash);
-    if (subtreeHash == 0) // for the very rare case that the hash is 0
+    subtree_hash = std::hash<std::string> {}(temp_hash);
+    if (subtree_hash == 0) // for the very rare case that the hash is 0
     {
-      subtreeHash = 1;
+      subtree_hash = 1;
     }
   }
 }
 
-std::shared_ptr<Node> Node::getChildByTag(const std::string &tag)
+std::shared_ptr<node_t> node_t::get_child_by_tag(const std::string &tag)
 {
   for (const auto &child : children)
   {
-    if (child->getTag() == tag)
+    if (child->get_tag() == tag)
     {
       return child;
     }
@@ -201,21 +201,21 @@ std::shared_ptr<Node> Node::getChildByTag(const std::string &tag)
   return nullptr;
 }
 
-std::shared_ptr<Node> Node::getParent()
+std::shared_ptr<node_t> node_t::get_parent()
 {
   return parent.lock();
 }
 
-std::shared_ptr<Node> Node::getRoot()
+std::shared_ptr<node_t> node_t::get_root()
 {
   if (parent.expired())
   {
     return shared_from_this();
   }
-  return parent.lock()->getRoot();
+  return parent.lock()->get_root();
 }
 
-bool Node::isAncestorOf(std::shared_ptr<Node> node)
+bool node_t::is_ancestor_of(std::shared_ptr<node_t> node)
 {
   auto current = node;
   while (!current->parent.expired())
@@ -232,93 +232,94 @@ bool Node::isAncestorOf(std::shared_ptr<Node> node)
   return false;
 }
 
-const std::vector<std::shared_ptr<Node>> &Node::getChildren()
+const std::vector<std::shared_ptr<node_t>> &node_t::get_children()
 {
   return children;
 }
 
-Node::RelativePosition Node::getRelativePosition(std::shared_ptr<Node> other)
+node_t::relative_position
+    node_t::get_relative_position(std::shared_ptr<node_t> other)
 {
   if (other.get() == this)
   {
-    return RelativePosition::overlapping;
+    return relative_position::overlapping;
   }
-  if (isAncestorOf(other) || other->isAncestorOf(shared_from_this()))
+  if (is_ancestor_of(other) || other->is_ancestor_of(shared_from_this()))
   {
-    return RelativePosition::overlapping;
+    return relative_position::overlapping;
   }
   else
   {
     int compareValue1, compareValue2;
-    if (sourcePosition.getStartPosition().first
-        == other->sourcePosition.getStartPosition().first)
+    if (m_node_position.get_start_position().first
+        == other->m_node_position.get_start_position().first)
     {
-      compareValue1 = sourcePosition.getStartPosition().second;
-      compareValue2 = other->sourcePosition.getStartPosition().second;
+      compareValue1 = m_node_position.get_start_position().second;
+      compareValue2 = other->m_node_position.get_start_position().second;
     }
     else
     {
-      compareValue1 = this->sourcePosition.getStartPosition().first;
-      compareValue2 = other->sourcePosition.getStartPosition().first;
+      compareValue1 = this->m_node_position.get_start_position().first;
+      compareValue2 = other->m_node_position.get_start_position().first;
     }
 
     if (compareValue1 < compareValue2)
     {
-      return RelativePosition::before;
+      return relative_position::before;
     }
     else
     {
-      return RelativePosition::after;
+      return relative_position::after;
     }
   }
 }
 
-const SourcePosition &Node::getSourcePosition() const
+const node_position &node_t::get_node_position() const
 {
-  return sourcePosition;
+  return m_node_position;
 }
 
-void Node::setNodeTypes(const std::vector<std::string> &types)
+void node_t::set_node_types(const std::vector<std::string> &types)
 {
-  allTypes = types;
+  all_types = types;
 }
 
-const std::vector<std::string> &Node::getNodeTypes() const
+const std::vector<std::string> &node_t::get_node_types() const
 {
-  return allTypes;
+  return all_types;
 }
 
-std::vector<std::shared_ptr<Node>> Node::getLeafs()
+std::vector<std::shared_ptr<node_t>> node_t::get_leaves()
 {
-  if (connectedLeaves.empty())
+  if (connected_leaves.empty())
   {
-    if (this->isLeaf())
+    if (this->is_leaf())
     {
-      connectedLeaves.push_back(shared_from_this());
+      connected_leaves.push_back(shared_from_this());
     }
     else
     {
       for (auto &child : this->children)
       {
-        auto childResult { child->getLeafs() };
-        connectedLeaves.insert(
-            connectedLeaves.end(), childResult.begin(), childResult.end());
+        auto childResult { child->get_leaves() };
+        connected_leaves.insert(
+            connected_leaves.end(), childResult.begin(), childResult.end());
       }
     }
   }
 
-  std::vector<std::shared_ptr<Node>> connectedLeavesShared;
-  for (auto l : connectedLeaves)
+  std::vector<std::shared_ptr<node_t>> connectedLeavesShared;
+  for (auto l : connected_leaves)
   {
     connectedLeavesShared.push_back(l.lock());
   }
   return connectedLeavesShared;
 }
 
-std::vector<std::shared_ptr<Node>> Node::getAncestors()
+std::vector<std::shared_ptr<node_t>> node_t::get_ancestors()
 {
-  std::vector<std::shared_ptr<Node>> ancestors;
-  std::shared_ptr<Node>              current = shared_from_this();
+  std::vector<std::shared_ptr<node_t>> ancestors;
+  std::shared_ptr<node_t>              current = shared_from_this();
   while (!current->parent.expired())
   {
     ancestors.push_back(current->parent.lock());
@@ -327,15 +328,15 @@ std::vector<std::shared_ptr<Node>> Node::getAncestors()
   return ancestors;
 }
 
-bool Node::getIsInIntersection()
+bool node_t::get_is_in_intersection()
 {
-  if (isInIntersection)
+  if (is_in_intersection)
   {
     return true;
   }
-  for (auto ancestor : this->getAncestors())
+  for (auto ancestor : this->get_ancestors())
   {
-    if (ancestor->getIsInIntersection())
+    if (ancestor->get_is_in_intersection())
     {
       return true;
     }
@@ -343,55 +344,56 @@ bool Node::getIsInIntersection()
   return false;
 }
 
-void Node::setIsInIntersection()
+void node_t::set_is_in_intersection()
 {
-  isInIntersection = true;
+  is_in_intersection = true;
   for (auto &child : children)
   {
-    child->setIsInIntersection();
+    child->set_is_in_intersection();
   }
 }
 
-std::vector<std::shared_ptr<Node>> Node::subtreesNotInIntersection()
+std::vector<std::shared_ptr<node_t>> node_t::subtrees_not_in_intersection()
 {
-  std::vector<std::shared_ptr<Node>> result;
-  std::vector<std::shared_ptr<Node>> descendants {
-    this->getPointerToEveryNode()
+  std::vector<std::shared_ptr<node_t>> result;
+  std::vector<std::shared_ptr<node_t>> descendants {
+    this->get_pointer_to_every_node()
   };
   if (std::none_of(descendants.begin(),
                    descendants.end(),
-                   [](std::shared_ptr<Node> &node)
-                   { return node->getIsInIntersection(); }))
+                   [](std::shared_ptr<node_t> &node)
+                   { return node->get_is_in_intersection(); }))
   {
     result.push_back(shared_from_this());
     return result;
   }
   for (auto &child : children)
   {
-    auto childResult { child->subtreesNotInIntersection() };
+    auto childResult { child->subtrees_not_in_intersection() };
     result.insert(result.end(), childResult.begin(), childResult.end());
   }
   return result;
 }
 
-void Node::setFeatureAFfiliations(const std::set<size_t> &featureAffiliations)
+void node_t::set_feature_affiliations(
+    const std::set<size_t> &feature_affiliations)
 {
-  this->featureAffiliations = featureAffiliations;
+  this->feature_affiliations = feature_affiliations;
 }
 
-std::set<size_t> Node::getFeatureAffiliations()
+std::set<size_t> node_t::get_feature_affiliations()
 {
-  return this->featureAffiliations;
+  return this->feature_affiliations;
 }
 
-std::string Node::getNodeRep()
+std::string node_t::get_node_rep()
 {
-  if (this->isLeaf())
+  if (this->is_leaf())
   {
-    return this->getTsText();
+    return this->get_ts_text();
   }
   else
   {
-    return this->getTag();
+    return this->get_tag();
   }
 }

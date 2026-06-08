@@ -11,24 +11,24 @@ struct alignment_token
 {
     enum class token_kind
     {
-      Node,
-      Filler
+      node,
+      filler
     } token_kind;
-    std::shared_ptr<Node> node {};
-    int                   filler_size {};
+    std::shared_ptr<node_t> node {};
+    int                     filler_size {};
 
     inline bool is_filler() const
     {
-      return token_kind == token_kind::Filler;
+      return token_kind == token_kind::filler;
     }
 
     inline bool is_node() const
     {
-      return token_kind == token_kind::Node;
+      return token_kind == token_kind::node;
     }
 };
 
-const alignment_token FILLER = { alignment_token::token_kind::Filler, nullptr };
+const alignment_token FILLER = { alignment_token::token_kind::filler, nullptr };
 
 bool operator== (const alignment_token &a, const alignment_token &b);
 
@@ -50,11 +50,11 @@ using token_table = std::vector<alignment_token>;
 class file_variant final
 {
   public:
-    std::string                          variant;
-    std::filesystem::path                filepath;
-    std::optional<std::shared_ptr<Node>> ast { std::nullopt };
-    std::optional<token_table>           m_token_table { std::nullopt };
-    std::optional<std::vector<size_t>>   hashed_ngrams { std::nullopt };
+    std::string                            variant;
+    std::filesystem::path                  filepath;
+    std::optional<std::shared_ptr<node_t>> ast { std::nullopt };
+    std::optional<token_table>             m_token_table { std::nullopt };
+    std::optional<std::vector<size_t>>     hashed_ngrams { std::nullopt };
 
     file_variant(const std::string           &variant_name,
                  const std::filesystem::path &filepath);

@@ -9,7 +9,7 @@ bool operator== (const alignment_token &a, const alignment_token &b)
   }
   if (a.is_node() && b.is_node())
   {
-    if (a.node->getTsText() == b.node->getTsText())
+    if (a.node->get_ts_text() == b.node->get_ts_text())
     {
       return true;
     }

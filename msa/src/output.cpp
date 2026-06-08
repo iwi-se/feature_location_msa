@@ -16,7 +16,7 @@ std::string render_token(const alignment_token &t)
   }
   if (t.is_node())
   {
-    auto tokenText { t.node->getTsText() };
+    auto tokenText { t.node->get_ts_text() };
     for (auto &ch : tokenText)
     {
       if (std::isspace(ch))

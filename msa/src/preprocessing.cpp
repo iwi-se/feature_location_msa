@@ -10,8 +10,8 @@ void load_asts(std::vector<file_variant> &variants, const options &options)
   {
     try
     {
-      auto ast { parseFile(file_variant.filepath,
-                           render_language(options.m_language)) };
+      auto ast { parse_file(file_variant.filepath,
+                            render_language(options.m_language)) };
       file_variant.ast = ast;
     }
     catch (...)
@@ -22,15 +22,15 @@ void load_asts(std::vector<file_variant> &variants, const options &options)
   }
 }
 
-std::vector<alignment_token> build_token_table(std::shared_ptr<Node> &ast)
+std::vector<alignment_token> build_token_table(std::shared_ptr<node_t> &ast)
 {
-  std::vector<alignment_token> tokenTable {};
-  for (auto &leaf : ast->getLeafs())
+  std::vector<alignment_token> token_table {};
+  for (auto &leaf : ast->get_leaves())
   {
-    tokenTable.push_back(
-        alignment_token { alignment_token::token_kind::Node, leaf });
+    token_table.push_back(
+        alignment_token { alignment_token::token_kind::node, leaf });
   }
-  return tokenTable;
+  return token_table;
 }
 
 void build_token_tables(std::vector<file_variant> &variants)
@@ -59,14 +59,14 @@ hash_count build_hash_count(std::vector<file_variant> &variants)
       if (alignment_token.is_node())
       {
         auto token { alignment_token.node };
-        if (hash_count.m.find(token->getSubtreeHash()) == hash_count.m.end())
+        if (hash_count.m.find(token->get_subtree_hash()) == hash_count.m.end())
         {
-          hash_count[token->getSubtreeHash()] = 1;
+          hash_count[token->get_subtree_hash()] = 1;
         }
-        hash_count[token->getSubtreeHash()]++;
-        if (hash_count[token->getSubtreeHash()] > hash_count.max)
+        hash_count[token->get_subtree_hash()]++;
+        if (hash_count[token->get_subtree_hash()] > hash_count.max)
         {
-          hash_count.max = hash_count[token->getSubtreeHash()];
+          hash_count.max = hash_count[token->get_subtree_hash()];
         }
       }
     }
@@ -106,7 +106,7 @@ std::vector<size_t>
     std::size_t seed = ngram.size();
     for (const alignment_token &tok : ngram)
     {
-      seed ^= std::hash<size_t> {}(tok.node->getSubtreeHash()) + 0x9e37'79b9
+      seed ^= std::hash<size_t> {}(tok.node->get_subtree_hash()) + 0x9e37'79b9
               + (seed << 6) + (seed >> 2);
     }
     ngram_hashes.push_back(seed);

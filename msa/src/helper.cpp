@@ -11,7 +11,7 @@ void print_token_vector(const std::vector<alignment_token>& vec)
     }
     else
     {
-      std::cout << tok.node->getTsText();
+      std::cout << tok.node->get_ts_text();
     }
   }
   std::cout << "\n" << std::endl;

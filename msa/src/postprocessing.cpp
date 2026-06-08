@@ -8,14 +8,14 @@ void apply_filler_size(std::vector<file_variant> &aligned_file_variants)
     for (auto &file : aligned_file_variants)
     {
       auto &seq { *file.m_token_table };
-      if (seq[i].token_kind == alignment_token::token_kind::Filler)
+      if (seq[i].token_kind == alignment_token::token_kind::filler)
       {
         continue;
       }
-      if (seq[i].token_kind == alignment_token::token_kind::Node
-          && seq[i].node->getTsText().size() > maxLength)
+      if (seq[i].token_kind == alignment_token::token_kind::node
+          && seq[i].node->get_ts_text().size() > maxLength)
       {
-        maxLength = seq[i].node->getTsText().size();
+        maxLength = seq[i].node->get_ts_text().size();
       }
     }
 

@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
-#include <iostream>
 #include <unordered_set>
 #include <utility>
 
@@ -74,13 +73,13 @@ std::pair<size_t, size_t> find_most_similar_pair(
   return { best_i, best_j };
 }
 
-std::vector<size_t> getHashTokens(const std::shared_ptr<Node>& n)
+std::vector<size_t> getHashTokens(const std::shared_ptr<node_t>& n)
 {
   std::vector<size_t> result {};
   result.reserve(1000);
-  for (auto& l : n->getLeafs())
+  for (auto& l : n->get_leaves())
   {
-    result.emplace_back(l->getSubtreeHash());
+    result.emplace_back(l->get_subtree_hash());
   }
   return result;
 }
@@ -97,20 +96,20 @@ size_t scoreLcsCount(const std::vector<size_t>& lcs,
   return score;
 }
 
-size_t calculateCommonAncestorProximity(std::shared_ptr<Node> node1,
-                                        std::shared_ptr<Node> node2)
+size_t calculateCommonAncestorProximity(std::shared_ptr<node_t> node1,
+                                        std::shared_ptr<node_t> node2)
 {
   size_t distance { 0 };
   while (node1 != nullptr)
   {
-    node1 = node1->getParent();
+    node1 = node1->get_parent();
     size_t innerDistance { 0 };
     auto   tempNode2 { node2 };
     while (tempNode2 != nullptr)
     {
-      tempNode2 = tempNode2->getParent();
+      tempNode2 = tempNode2->get_parent();
       if (node1 != nullptr && tempNode2 != nullptr
-          && node1->getTag() == tempNode2->getTag())
+          && node1->get_tag() == tempNode2->get_tag())
       {
         return innerDistance + distance;
       }
@@ -141,12 +140,12 @@ std::vector<size_t> commonTokens(const std::vector<size_t>& a,
   return result;
 }
 
-double subtreeSimilarity(const std::shared_ptr<Node>&        n1,
-                         const std::shared_ptr<Node>&        n2,
+double subtreeSimilarity(const std::shared_ptr<node_t>&      n1,
+                         const std::shared_ptr<node_t>&      n2,
                          const hash_count&                   hashCount,
                          std::unordered_map<size_t, double>& cache)
 {
-  size_t subtreeHashPair { n1->getSubtreeHash() ^ n2->getSubtreeHash() };
+  size_t subtreeHashPair { n1->get_subtree_hash() ^ n2->get_subtree_hash() };
 
   if (cache.find(subtreeHashPair) != cache.end())
   {
@@ -154,7 +153,7 @@ double subtreeSimilarity(const std::shared_ptr<Node>&        n1,
   }
 
   double result {};
-  if (n1->getSubtreeHash() == n2->getSubtreeHash())
+  if (n1->get_subtree_hash() == n2->get_subtree_hash())
   {
     result += 1;
   }
@@ -182,13 +181,13 @@ double subtreeSimilarity(const std::shared_ptr<Node>&        n1,
   return result;
 }
 
-double ancestorSimilarity(std::shared_ptr<Node>               n1,
-                          std::shared_ptr<Node>               n2,
+double ancestorSimilarity(std::shared_ptr<node_t>             n1,
+                          std::shared_ptr<node_t>             n2,
                           const hash_count&                   hashCount,
                           std::unordered_map<size_t, double>& cache)
 {
-  if (n1 == nullptr || n2 == nullptr || n1->getParent() == nullptr
-      || n2->getParent() == nullptr)
+  if (n1 == nullptr || n2 == nullptr || n1->get_parent() == nullptr
+      || n2->get_parent() == nullptr)
   {
     return 0;
   }
@@ -196,7 +195,7 @@ double ancestorSimilarity(std::shared_ptr<Node>               n1,
   auto   n1Orig { n1 };
   double result {};
   double level { 1 };
-  if (n1->getParent()->getTag() != n2->getParent()->getTag())
+  if (n1->get_parent()->get_tag() != n2->get_parent()->get_tag())
   {
     result += std::pow(
         static_cast<double>(calculateCommonAncestorProximity(n1, n2)) + 1.0,
@@ -206,8 +205,8 @@ double ancestorSimilarity(std::shared_ptr<Node>               n1,
   {
     while (level < 5)
     {
-      n1        = n1->getParent();
-      n2        = n2->getParent();
+      n1        = n1->get_parent();
+      n2        = n2->get_parent();
       auto temp = (std::pow(level, -0.5))
                   * subtreeSimilarity(n1, n2, hashCount, cache) * 10;
 
@@ -215,7 +214,7 @@ double ancestorSimilarity(std::shared_ptr<Node>               n1,
 
       ++level;
 
-      if (n1->getParent() == nullptr || n2->getParent() == nullptr)
+      if (n1->get_parent() == nullptr || n2->get_parent() == nullptr)
       {
         break;
       }
@@ -229,12 +228,12 @@ double score(const alignment_token&              a,
              const hash_count&                   hashCount,
              std::unordered_map<size_t, double>& cache)
 {
-  if (a.token_kind == alignment_token::token_kind::Filler
-      || b.token_kind == alignment_token::token_kind::Filler)
+  if (a.token_kind == alignment_token::token_kind::filler
+      || b.token_kind == alignment_token::token_kind::filler)
   {
     return -100.0;
   }
-  if (a.node->getSubtreeHash() == b.node->getSubtreeHash())
+  if (a.node->get_subtree_hash() == b.node->get_subtree_hash())
   {
     return ancestorSimilarity(a.node, b.node, hashCount, cache);
   };

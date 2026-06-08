@@ -6,12 +6,15 @@
 #include "preprocessing.hpp"
 #include <algorithm>
 #include <execution>
+#include <iostream>
 #include <vector>
 
 int main(int argc, char* argv[])
 {
   auto options { parse_cli_arguments(argc, argv) };
   auto file_families { discover_files(options) };
+
+  std::cout << "Discovered " << file_families.size() << " files" << std::endl;
 
   std::for_each(std::execution::par,
                 file_families.begin(),
@@ -27,6 +30,8 @@ int main(int argc, char* argv[])
                   apply_filler_size(file_family.variants);
 
                   output(file_family, options);
+
+                  std::cout << "Done" << std::endl;
                 });
 
   return 0;
