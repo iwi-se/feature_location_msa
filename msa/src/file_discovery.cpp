@@ -64,12 +64,7 @@ std::string
 
   std::string filename { modifiedPath };
 
-  size_t dot_pos = filename.find_last_of('.');
-  if (dot_pos == std::string::npos)
-  {
-    return filename; // No extension found
-  }
-  return filename.substr(0, dot_pos);
+  return filename;
 }
 
 file_families discover_files(const options &options)

@@ -71,7 +71,7 @@ void write_machine_output(const file_family &file_family,
     outputFile << file_family.name << "\n";
     for (const auto &variant : file_family.variants)
     {
-      // outputFile << variant << "\n";
+      outputFile << variant.variant << "\n";
       outputFile << variant.filepath.string();
       outputFile << "\n";
       for (const auto &tok : *variant.m_token_table)
