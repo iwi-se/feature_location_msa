@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+  <meta charset="UTF-8" />
+
+  <title>Feature viewer</title>
+
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+  <meta name="description" content="" />
+
+  <style>
+    body {
+      font-family: "sans-serif";
+      font-size: 12px;
+    }
+
+    #code {
+      font-family: monospace;
+    }
+    
+    #featureSelect {
+      position: sticky;
+      top: 10px;
+    }
+  </style>
+
+</head>
+
+<body>
+
+    <div style="display: flex; gap: 50px">
+      <div>
+        
+      <div id="featureSelect">
+      </div>
+      </div>
+      <div id="code">
+        ___code___
+      </div>
+    </div>
+
+
+
+<script>
+const alpha = 0.7;
+
+const colors = [
+  `rgba(229, 115, 115, ${alpha})`, // Soft Red
+  `rgba(100, 181, 246, ${alpha})`, // Soft Blue
+  `rgba(129, 199, 132, ${alpha})`, // Soft Green
+  `rgba(255, 241, 118, ${alpha})`, // Soft Yellow
+  `rgba(255, 183, 77, ${alpha})`,  // Soft Orange
+  `rgba(186, 104, 200, ${alpha})`, // Soft Purple
+  `rgba(77, 208, 225, ${alpha})`,  // Soft Cyan
+  `rgba(240, 98, 146, ${alpha})`,  // Soft Pink
+  `rgba(174, 213, 129, ${alpha})`, // Light Lime
+  `rgba(144, 164, 174, ${alpha})`, // Cool Gray
+  `rgba(128, 203, 196, ${alpha})`, // Soft Teal
+  `rgba(188, 170, 164, ${alpha})`, // Warm Brown
+  `rgba(220, 231, 117, ${alpha})`, // Light Olive
+  `rgba(121, 134, 203, ${alpha})`, // Muted Indigo
+  `rgba(161, 136, 127, ${alpha})`, // Dusty Maroon
+  `rgba(255, 138, 101, ${alpha})`, // Gentle Coral
+  `rgba(77, 182, 172, ${alpha})`,  // Turquoise Tint
+  `rgba(255, 213, 79, ${alpha})`,  // Muted Gold
+  `rgba(176, 190, 197, ${alpha})`, // Soft Silver
+  `rgba(206, 147, 216, ${alpha})`  // Light Violet
+];
+
+const featuresStr = "___features___";
+const featuresRaw = featuresStr.split(",");
+
+let featureCount = new Map();
+const codeElements = document.querySelectorAll("#code span");
+codeElements.forEach(function(el){
+  const f = el.classList[0];
+  let c = featureCount.get(f);
+  if (c !== undefined)
+  {
+    featureCount.set(f, c + 1);
+  }
+  else
+  {
+    featureCount.set(f, 1); 
+  }
+});
+
+featureCount = [...featureCount.entries()].sort((a, b) => b[1] - a[1])
+
+let features = [];
+featureCount.forEach(function (f){
+    features.push(f[0]);
+})
+
+let activated = features.slice(0, 20);
+
+function updateCode()
+{
+  codeElements.forEach(function (el) {
+    if (activated.includes(el.classList[0]))
+    {
+      el.style.backgroundColor = colors[activated.indexOf(el.classList[0])];
+    }
+    else
+    {
+      el.style.backgroundColor = "transparent";
+    }
+  });
+}
+
+const button = document.createElement("button");
+button.appendChild(document.createTextNode("Disable All"));
+button.addEventListener("click", function() {
+  activated = [];
+  updateAll();
+});
+document.getElementById("featureSelect").appendChild(button);
+
+for (const feature in featureCount) {
+  const f = featureCount[feature][0]
+  const c = featureCount[feature][1]
+  const el = document.createElement("div");
+  const lbl = document.createElement("label");
+  el.appendChild(lbl);
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.id = f;
+
+  if (c === undefined)
+  {
+    cb.disabled = true;
+    c = 0;
+  }
+
+  cb.addEventListener("change", function () {
+    if (cb.checked)
+    {
+      activated.push(f);
+    }
+    else {
+      activated = activated.filter(function(item) {
+      return item !== f;
+      });
+    }
+    updateAll();
+    updateCode();
+  });
+
+  function update()
+  {
+    if (activated.includes(f))
+    {
+      cb.checked = true;
+      el.style.backgroundColor = colors[activated.indexOf(f)];
+    }
+    else{
+      cb.checked = false;
+      el.style.backgroundColor = "transparent";
+    }
+  }
+  cb["updateCheckedState"] = update;
+
+  lbl.appendChild(cb);
+
+  const span = document.createElement("span")
+  span.innerHTML = "<b style=\"padding-right: 30px\">" + f.replaceAll("_", " ") + "</b> (" + c + " Tokens)"
+
+  lbl.appendChild(span)
+  
+  const fs = document.getElementById("featureSelect");
+  fs.appendChild(el);
+}
+
+function updateAll()
+{
+  for (const feature in features) {
+    const f = features[feature]
+    const el = document.getElementById(f);
+    el.updateCheckedState();
+  }
+  updateCode();
+}
+updateAll();
+
+
+</script>
+</body>
+
+</html>

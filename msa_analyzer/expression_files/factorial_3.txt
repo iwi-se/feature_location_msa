@@ -1,0 +1,47 @@
+~a & ~b & ~c: { Sys5 } \ { Sys8 | Sys6 | Sys7 | Sys1 | Sys4 | Sys2 | Sys3 }
+a & ~b & ~c: { Sys8 } \ { Sys5 | Sys6 | Sys7 | Sys1 | Sys4 | Sys2 | Sys3 }
+~b & ~c: { Sys5 & Sys8 } \ { Sys6 | Sys7 | Sys1 | Sys4 | Sys2 | Sys3 }
+b & ~a & ~c: { Sys6 } \ { Sys5 | Sys8 | Sys7 | Sys1 | Sys4 | Sys2 | Sys3 }
+~a & ~c: { Sys5 & Sys6 } \ { Sys8 | Sys7 | Sys1 | Sys4 | Sys2 | Sys3 }
+a & b & ~c: { Sys7 } \ { Sys5 | Sys8 | Sys6 | Sys1 | Sys4 | Sys2 | Sys3 }
+a & ~c: { Sys8 & Sys7 } \ { Sys5 | Sys6 | Sys1 | Sys4 | Sys2 | Sys3 }
+b & ~c: { Sys6 & Sys7 } \ { Sys5 | Sys8 | Sys1 | Sys4 | Sys2 | Sys3 }
+~c: { Sys5 & Sys8 & Sys6 & Sys7 } \ { Sys1 | Sys4 | Sys2 | Sys3 }
+c & ~a & ~b: { Sys1 } \ { Sys5 | Sys8 | Sys6 | Sys7 | Sys4 | Sys2 | Sys3 }
+~a & ~b: { Sys5 & Sys1 } \ { Sys8 | Sys6 | Sys7 | Sys4 | Sys2 | Sys3 }
+a & c & ~b: { Sys4 } \ { Sys5 | Sys8 | Sys6 | Sys7 | Sys1 | Sys2 | Sys3 }
+a & ~b: { Sys8 & Sys4 } \ { Sys5 | Sys6 | Sys7 | Sys1 | Sys2 | Sys3 }
+c & ~b: { Sys1 & Sys4 } \ { Sys5 | Sys8 | Sys6 | Sys7 | Sys2 | Sys3 }
+~b: { Sys5 & Sys8 & Sys1 & Sys4 } \ { Sys6 | Sys7 | Sys2 | Sys3 }
+~b | ~c: { Sys5 & Sys8 & Sys6 & Sys7 & Sys1 & Sys4 } \ { Sys2 | Sys3 }
+b & c & ~a: { Sys2 } \ { Sys5 | Sys8 | Sys6 | Sys7 | Sys1 | Sys4 | Sys3 }
+b & ~a: { Sys6 & Sys2 } \ { Sys5 | Sys8 | Sys7 | Sys1 | Sys4 | Sys3 }
+c & ~a: { Sys1 & Sys2 } \ { Sys5 | Sys8 | Sys6 | Sys7 | Sys4 | Sys3 }
+~a: { Sys5 & Sys6 & Sys1 & Sys2 } \ { Sys8 | Sys7 | Sys4 | Sys3 }
+~a | ~c: { Sys5 & Sys8 & Sys6 & Sys7 & Sys1 & Sys2 } \ { Sys4 | Sys3 }
+~a | ~b: { Sys5 & Sys8 & Sys6 & Sys1 & Sys4 & Sys2 } \ { Sys7 | Sys3 }
+~a | ~b | ~c: { Sys5 & Sys8 & Sys6 & Sys7 & Sys1 & Sys4 & Sys2 } \ { Sys3 }
+a & b & c: { Sys3 } \ { Sys5 | Sys8 | Sys6 | Sys7 | Sys1 | Sys4 | Sys2 }
+a & b: { Sys7 & Sys3 } \ { Sys5 | Sys8 | Sys6 | Sys1 | Sys4 | Sys2 }
+a & c: { Sys4 & Sys3 } \ { Sys5 | Sys8 | Sys6 | Sys7 | Sys1 | Sys2 }
+a: { Sys8 & Sys7 & Sys4 & Sys3 } \ { Sys5 | Sys6 | Sys1 | Sys2 }
+a | ~c: { Sys5 & Sys8 & Sys6 & Sys7 & Sys4 & Sys3 } \ { Sys1 | Sys2 }
+a | ~b: { Sys5 & Sys8 & Sys7 & Sys1 & Sys4 & Sys3 } \ { Sys6 | Sys2 }
+a | ~b | ~c: { Sys5 & Sys8 & Sys6 & Sys7 & Sys1 & Sys4 & Sys3 } \ { Sys2 }
+b & c: { Sys2 & Sys3 } \ { Sys5 | Sys8 | Sys6 | Sys7 | Sys1 | Sys4 }
+b: { Sys6 & Sys7 & Sys2 & Sys3 } \ { Sys5 | Sys8 | Sys1 | Sys4 }
+b | ~c: { Sys5 & Sys8 & Sys6 & Sys7 & Sys2 & Sys3 } \ { Sys1 | Sys4 }
+b | ~a: { Sys5 & Sys6 & Sys7 & Sys1 & Sys2 & Sys3 } \ { Sys8 | Sys4 }
+b | ~a | ~c: { Sys5 & Sys8 & Sys6 & Sys7 & Sys1 & Sys2 & Sys3 } \ { Sys4 }
+a | b: { Sys8 & Sys6 & Sys7 & Sys4 & Sys2 & Sys3 } \ { Sys5 | Sys1 }
+a | b | ~c: { Sys5 & Sys8 & Sys6 & Sys7 & Sys4 & Sys2 & Sys3 } \ { Sys1 }
+c: { Sys1 & Sys4 & Sys2 & Sys3 } \ { Sys5 | Sys8 | Sys6 | Sys7 }
+c | ~b: { Sys5 & Sys8 & Sys1 & Sys4 & Sys2 & Sys3 } \ { Sys6 | Sys7 }
+c | ~a: { Sys5 & Sys6 & Sys1 & Sys4 & Sys2 & Sys3 } \ { Sys8 | Sys7 }
+c | ~a | ~b: { Sys5 & Sys8 & Sys6 & Sys1 & Sys4 & Sys2 & Sys3 } \ { Sys7 }
+a | c: { Sys8 & Sys7 & Sys1 & Sys4 & Sys2 & Sys3 } \ { Sys5 | Sys6 }
+a | c | ~b: { Sys5 & Sys8 & Sys7 & Sys1 & Sys4 & Sys2 & Sys3 } \ { Sys6 }
+b | c: { Sys6 & Sys7 & Sys1 & Sys4 & Sys2 & Sys3 } \ { Sys5 | Sys8 }
+b | c | ~a: { Sys5 & Sys6 & Sys7 & Sys1 & Sys4 & Sys2 & Sys3 } \ { Sys8 }
+a | b | c: { Sys8 & Sys6 & Sys7 & Sys1 & Sys4 & Sys2 & Sys3 } \ { Sys5 }
+True: { Sys5 & Sys8 & Sys6 & Sys7 & Sys1 & Sys4 & Sys2 & Sys3 } \ {  }
