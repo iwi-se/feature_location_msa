@@ -7,20 +7,30 @@
 #include <algorithm>
 #include <execution>
 #include <iostream>
+#include <tbb/global_control.h>
 #include <vector>
 
 int main(int argc, char* argv[])
 {
+  // Limit threads
+  tbb::global_control gc(tbb::global_control::max_allowed_parallelism, 6);
+
   auto options { parse_cli_arguments(argc, argv) };
   auto file_families { discover_files(options) };
 
-  std::cout << "Discovered " << file_families.size() << " files" << std::endl;
+  std::cout << "Discovered " << file_families.size() << " file families"
+            << std::endl;
+
+  std::atomic<int> processed_count { 0 };
+  const size_t     total { file_families.size() };
 
   std::for_each(std::execution::par,
                 file_families.begin(),
                 file_families.end(),
-                [options](auto& file_family)
+                [&](auto&& file_family_p)
                 {
+                  auto file_family { std::move(file_family_p) };
+
                   load_asts(file_family.variants, options);
                   build_token_tables(file_family.variants);
                   calculate_ngram_hashes(file_family.variants, options);
@@ -31,7 +41,9 @@ int main(int argc, char* argv[])
 
                   output(file_family, options);
 
-                  std::cout << "Done" << std::endl;
+                  int current = ++processed_count;
+                  std::cout << "\rProcessed " << current << "/" << total
+                            << " file families" << std::flush;
                 });
 
   return 0;
