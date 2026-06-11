@@ -7,8 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_library(TBB tbb)
 find_library(TREE_SITTER_LIB tree-sitter)
-find_library(TREE_SITTER_CPP_LIB tree-sitter-cpp)
-find_library(TREE_SITTER_JAVA_LIB tree-sitter-java)
+find_library(TREE_SITTER_CPP_LIB NAMES tree-sitter-cpp)
+find_library(TREE_SITTER_JAVA_LIB NAMES tree-sitter-java)
 
 
 file(GLOB SRC_FILES

@@ -1,14 +1,16 @@
 #include "tree.hpp"
 #include "tree_sitter/api.h"
-#include "tree_sitter/tree-sitter-cpp.h"
-#include "tree_sitter/tree-sitter-java.h"
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
 
-const TSLanguage *tree_sitter_java(void);
-const TSLanguage *tree_sitter_cpp(void);
+extern "C"
+{
+  struct TSLanguage;
+  const TSLanguage *tree_sitter_java(void);
+  const TSLanguage *tree_sitter_cpp(void);
+}
 
 std::string getNodeText(const TSNode &tsNode, const std::string &fileContents)
 {
