@@ -1,6 +1,7 @@
 #include "argouml_benchmark_format.hpp"
 #include "parser.hpp"
 #include "tree.hpp"
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -9,6 +10,7 @@
 #include <regex>
 #include <sstream>
 #include <stack>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -60,7 +62,7 @@ alignment_token_t make_node_token(node_t *n)
 const alignment_token_t filler_t { alignment_token_t::token_kind_t::filler_t };
 
 using spl_file_t = std::string;
-using system_t   = std::string;
+using system_t   = size_t;
 
 struct system_tokens_t
 {
@@ -70,16 +72,6 @@ struct system_tokens_t
 
 struct msa_representation_t
 {
-    std::vector<system_t> get_system_names() const
-    {
-      std::vector<system_t> system_names {};
-      for (const auto &system_name : (internal_rep.begin()->second))
-      {
-        system_names.push_back(system_name.first);
-      }
-      return system_names;
-    }
-
     std::string                                               lang {};
     std::map<spl_file_t, std::map<system_t, system_tokens_t>> internal_rep {};
 };
@@ -89,9 +81,18 @@ bool parse_system_msa(std::ifstream                        &file,
                       const std::string                    &lang)
 {
   std::string system_name {};
+  size_t      system_index {};
   if (file)
   {
     std::getline(file, system_name);
+    try
+    {
+      system_index = std::stoul(system_name);
+    }
+    catch (const std::invalid_argument &e)
+    {
+      return false;
+    }
   }
   else
   {
@@ -137,7 +138,7 @@ bool parse_system_msa(std::ifstream                        &file,
     file.get();
   }
 
-  out = std::make_pair(system_name,
+  out = std::make_pair(system_index,
                        system_tokens_t { std::move(tree), tokens });
 
   return true;
@@ -225,7 +226,8 @@ struct operation_t
       render
     } operation_type;
     std::filesystem::path msa_path {};
-    std::filesystem::path expressions_file {};
+    std::filesystem::path isolation_executable {};
+    std::filesystem::path spl_specification_file {};
 };
 
 void argument_error(char *argv[])
@@ -257,11 +259,13 @@ operation_t cli_arguments(int argc, char *argv[])
     {
       argument_error(argv);
     }
-    std::string msa_path { argv[2] };
-    std::string expressions_file { argv[3] };
+    std::string           msa_path { argv[2] };
+    std::filesystem::path isolation_executable { argv[3] };
+    std::filesystem::path spl_specification_file { argv[4] };
     return operation_t { operation_t::operation_type_t::render,
                          msa_path,
-                         expressions_file };
+                         isolation_executable,
+                         spl_specification_file };
   }
   else if (operation_type == "analyze")
   {
@@ -281,12 +285,12 @@ operation_t cli_arguments(int argc, char *argv[])
 
 void print_systems(const msa_representation_t &msa)
 {
-  std::cout << "Found " << msa.get_system_names().size() << " systems"
-            << std::endl;
-  for (const auto &system_name : msa.get_system_names())
-  {
-    std::cout << system_name << std::endl;
-  }
+  // std::cout << "Found " << msa.get_system_names().size() << " systems"
+  //           << std::endl;
+  // for (const auto &system_name : msa.get_system_names())
+  // {
+  //   std::cout << system_name << std::endl;
+  // }
 }
 
 std::vector<std::string> parse_block(const std::string &block,
@@ -474,28 +478,28 @@ std::vector<node_t *>
   return res;
 }
 
-std::map<std::string, std::vector<node_t *>> evaluate_expression(
-    const std::pair<std::vector<std::string>, std::vector<std::string>>
-                               &parsed_expression,
-    const msa_representation_t &msa)
-{
-  std::map<std::string, std::vector<node_t *>> result;
-  for (const auto &spl_file : msa.internal_rep)
-  {
-    auto res { evaluate_expression_file(parsed_expression, spl_file.second) };
-    std::vector<alignment_token_t> single_tokens {};
-    for (const auto &n : res)
-    {
-      if (!n.empty())
-      {
-        single_tokens.push_back(n[0]);
-      }
-    }
-    auto nodes { alignment_tokens_to_nodes(single_tokens) };
-    result.insert(std::make_pair(spl_file.first, nodes));
-  }
-  return result;
-}
+// std::map<std::string, std::vector<node_t *>> evaluate_expression(
+//     const std::pair<std::vector<std::string>, std::vector<std::string>>
+//                                &parsed_expression,
+//     const msa_representation_t &msa)
+// {
+//   std::map<std::string, std::vector<node_t *>> result;
+//   for (const auto &spl_file : msa.internal_rep)
+//   {
+//     auto res { evaluate_expression_file(parsed_expression, spl_file.second)
+//     }; std::vector<alignment_token_t> single_tokens {}; for (const auto &n :
+//     res)
+//     {
+//       if (!n.empty())
+//       {
+//         single_tokens.push_back(n[0]);
+//       }
+//     }
+//     auto nodes { alignment_tokens_to_nodes(single_tokens) };
+//     result.insert(std::make_pair(spl_file.first, nodes));
+//   }
+//   return result;
+// }
 
 void print_nodes(const std::vector<node_t *> &nodes)
 {
@@ -516,45 +520,74 @@ void print_results_per_file(
   }
 }
 
-std::vector<std::pair<std::string, std::string>>
-    read_expressions_from_file(std::filesystem::path fp)
+std::string exec_and_capture(const std::string &command)
 {
-  std::vector<std::pair<std::string, std::string>> result;
-  std::ifstream                                    file { fp };
+  std::array<char, 4096> buffer;
+  std::string            result;
 
-  if (!file.is_open())
+  FILE *pipe = popen(command.c_str(), "r");
+  if (!pipe)
   {
-    std::cerr << "Failed to open file.\n";
-    exit(1);
+    throw std::runtime_error("popen() failed");
   }
 
-  std::string line {};
-  while (std::getline(file, line))
+  while (fgets(buffer.data(), buffer.size(), pipe) != nullptr)
   {
-    if (line.empty())
-    {
-      break;
-    }
-
-    size_t colon_pos = line.find(':');
-    if (colon_pos != std::string::npos)
-    {
-      std::string key = line.substr(0, colon_pos);
-
-      std::string value = line.substr(colon_pos + 1);
-      if (!value.empty() && value[0] == ' ')
-      {
-        value = value.substr(1);
-      }
-      result.push_back({ key, value });
-    }
-    else
-    {
-      std::cerr << "Error in expressions file" << std::endl;
-    }
+    result += buffer.data();
   }
-  file.close();
+
+  int rc = pclose(pipe);
+  (void)rc; // Optional: inspect exit status
+
   return result;
+}
+
+std::string build_isolation_call(const operation_t &operation,
+                                 const std::string &systems_hash)
+{
+  std::string result {};
+
+  result += operation.isolation_executable;
+  result += " ";
+
+  result += "expr ";
+  result += operation.spl_specification_file;
+  result += " ";
+  result += systems_hash;
+
+  return result;
+}
+
+std::string hash_systems(const std::vector<size_t> &systems)
+{
+  std::string result {};
+  for (const auto &system : systems)
+  {
+    result += std::to_string(system);
+    result += " ";
+  }
+  return result;
+}
+
+std::string get_feature_from_systems(const std::vector<size_t> &systems,
+                                     const operation_t         &operation)
+{
+  static std::map<std::string, std::string> system_feature_map {};
+  std::string systems_hash { hash_systems(systems) };
+
+  if (system_feature_map.contains(systems_hash))
+  {
+    return system_feature_map[systems_hash];
+  }
+  else
+  {
+    std::string isolation_call { build_isolation_call(operation,
+                                                      systems_hash) };
+    std::string result { exec_and_capture(isolation_call) };
+    result.pop_back();
+    system_feature_map.insert(std::make_pair(systems_hash, result));
+    return result;
+  }
 }
 
 void analyze(operation_t op, const msa_representation_t &msa)
@@ -579,48 +612,84 @@ void analyze(operation_t op, const msa_representation_t &msa)
     }
   }
 
-  auto expressions { read_expressions_from_file(op.expressions_file) };
+  std::set<std::string> features;
 
-  for (const auto &expression : expressions)
+  for (const auto &file : msa.internal_rep)
   {
-    auto parsed_expression { parse_expression(expression.second) };
-    auto results_per_file { evaluate_expression(parsed_expression, msa) };
-
-    if (msa.lang == "java")
+    for (size_t token_index { 0 };
+         token_index < file.second.at(0ul).tokens.size();
+         ++token_index)
     {
-      auto benchmark_format_per_file { build_argouml_benchmark_format(
-          results_per_file) };
-
-      auto output_file { std::ofstream(output_directory + "/" + expression.first
-                                       + ".txt") };
-      for (const auto &res : benchmark_format_per_file)
+      std::vector<size_t> systems;
+      for (const auto &system_id_and_tokens : file.second)
       {
-        output_file << res.second;
+        if (system_id_and_tokens.second.tokens[token_index].is_node())
+        {
+          systems.push_back(system_id_and_tokens.first);
+        }
       }
-
-      output_file.close();
+      const std::string feature { get_feature_from_systems(systems, op) };
+      features.insert(feature);
+      for (const auto &system_id_and_tokens : file.second)
+      {
+        if (system_id_and_tokens.second.tokens[token_index].is_node())
+        {
+          system_id_and_tokens.second.tokens[token_index].node->feature
+              = feature;
+        }
+      }
     }
   }
+
+  // for (const auto &expression : expressions)
+  // {
+  //   auto parsed_expression { parse_expression(expression.second) };
+  //   auto results_per_file { evaluate_expression(parsed_expression, msa) };
+  //
+  //   if (msa.lang == "java")
+  //   {
+  //     auto benchmark_format_per_file { build_argouml_benchmark_format(
+  //         results_per_file) };
+  //
+  //     auto output_file { std::ofstream(output_directory + "/" +
+  //     expression.first
+  //                                      + ".txt") };
+  //     for (const auto &res : benchmark_format_per_file)
+  //     {
+  //       output_file << res.second;
+  //     }
+  //
+  //     output_file.close();
+  //   }
+  // }
 }
 
 void render(operation_t op, const msa_representation_t &msa)
 {
-  auto expressions { read_expressions_from_file(op.expressions_file) };
+  std::set<std::string> features;
 
-  for (const auto &expression : expressions)
+  for (const auto &file : msa.internal_rep)
   {
-    auto parsed_expression { parse_expression(expression.second) };
-    for (const auto &spl_file : msa.internal_rep)
+    for (size_t token_index { 0 };
+         token_index < file.second.begin()->second.tokens.size();
+         ++token_index)
     {
-      auto res { evaluate_expression_file(parsed_expression, spl_file.second) };
-      for (auto &tok : res)
+      std::vector<size_t> systems;
+      for (const auto &system_id_and_tokens : file.second)
       {
-        for (auto &single_tok : tok)
+        if (system_id_and_tokens.second.tokens[token_index].is_node())
         {
-          if (single_tok.is_node() && single_tok.node->feature.empty())
-          {
-            single_tok.node->feature = expression.first;
-          }
+          systems.push_back(system_id_and_tokens.first);
+        }
+      }
+      const std::string feature { get_feature_from_systems(systems, op) };
+      features.insert(feature);
+      for (const auto &system_id_and_tokens : file.second)
+      {
+        if (system_id_and_tokens.second.tokens[token_index].is_node())
+        {
+          system_id_and_tokens.second.tokens[token_index].node->feature
+              = feature;
         }
       }
     }
@@ -628,23 +697,17 @@ void render(operation_t op, const msa_representation_t &msa)
 
   std::ostringstream content {};
 
-  std::ifstream file("../template.html");
-  std::string   templ(std::istreambuf_iterator<char> { file }, {});
-
-  std::vector<std::string> features;
-  for (const auto &pair : expressions)
-  {
-    features.push_back(pair.first);
-  }
+  std::ifstream templ_file_name("../template.html");
+  std::string   templ(std::istreambuf_iterator<char> { templ_file_name }, {});
 
   for (const auto &file_pair : msa.internal_rep)
   {
-    for (const auto &system_pair : file_pair.second)
+    for (const auto &system_id_and_tokens : file_pair.second)
     {
       content << "<pre>";
       int line { 0 };
       int col { 0 };
-      for (const auto &tok : system_pair.second.tokens)
+      for (const auto &tok : system_id_and_tokens.second.tokens)
       {
         if (tok.is_node())
         {
