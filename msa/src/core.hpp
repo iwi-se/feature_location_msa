@@ -47,6 +47,35 @@ struct hash_count
 
 using token_table = std::vector<alignment_token>;
 
+struct guide_tree_node
+{
+    size_t id { 0 };
+
+    std::optional<size_t> variant_index;
+
+    std::shared_ptr<guide_tree_node> left;
+    std::shared_ptr<guide_tree_node> right;
+
+    double similarity { 0.0 };
+    size_t size { 1 };
+
+    bool is_leaf() const
+    {
+      return variant_index.has_value();
+    }
+};
+
+struct guide_tree
+{
+    std::shared_ptr<guide_tree_node> root;
+
+    // optional: store leaves in order for fast lookup
+    std::vector<std::shared_ptr<guide_tree_node>> leaves;
+
+    // map variant index -> leaf node
+    std::unordered_map<size_t, std::shared_ptr<guide_tree_node>> leaf_map;
+};
+
 struct file_variant_info final
 {
     std::string           variant;
@@ -80,6 +109,7 @@ struct file_family final
 {
     std::string               name {};
     std::vector<file_variant> variants;
+    std::optional<guide_tree> m_guide_tree;
 
     file_family(const std::string &name, std::vector<file_variant> &&variants);
     file_family(const file_family_info &info);

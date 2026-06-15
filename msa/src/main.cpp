@@ -2,6 +2,8 @@
 #include "arguments.hpp"
 #include "core.hpp"
 #include "file_discovery.hpp"
+#include "guide_tree.hpp"
+#include "helper.hpp"
 #include "output.hpp"
 #include "postprocessing.hpp"
 #include "preprocessing.hpp"
@@ -35,6 +37,9 @@ int main(int argc, char* argv[])
                   load_asts(file_family.variants, options);
                   build_token_tables(file_family.variants);
                   calculate_ngram_hashes(file_family.variants, options);
+
+                  build_guide_tree(file_family, options);
+                  print_guide_tree(*file_family.m_guide_tree, file_family);
 
                   align_file_variants(file_family.variants, options);
 

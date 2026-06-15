@@ -8,22 +8,6 @@
 #include <unordered_set>
 #include <utility>
 
-size_t count_common_ngrams(const std::vector<size_t>& a,
-                           const std::vector<size_t>& b)
-{
-  std::unordered_set<size_t> ngram_hashes_set { a.begin(), a.end() };
-
-  size_t count {};
-  for (const auto& ngram_hash : b)
-  {
-    if (ngram_hashes_set.contains(ngram_hash))
-    {
-      ++count;
-    }
-  }
-  return count;
-}
-
 size_t find_most_similar_element(
     const std::vector<size_t>& source,
     const std::vector<std::reference_wrapper<const std::vector<size_t>>>&
