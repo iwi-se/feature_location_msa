@@ -47,7 +47,14 @@ struct hash_count
 
 using token_table = std::vector<alignment_token>;
 
+struct file_variant_info final
+{
+    std::string           variant;
+    std::filesystem::path filepath;
+};
+
 class file_variant final
+
 {
   public:
     std::string                            variant;
@@ -63,12 +70,19 @@ class file_variant final
     file_variant(file_variant &&);                           // only move
 };
 
+struct file_family_info final
+{
+    std::string                    name {};
+    std::vector<file_variant_info> variants;
+};
+
 struct file_family final
 {
     std::string               name {};
     std::vector<file_variant> variants;
 
     file_family(const std::string &name, std::vector<file_variant> &&variants);
+    file_family(const file_family_info &info);
     file_family(file_family &&);                           // only move
     file_family(const file_family &)             = delete; // never copy
     file_family &operator= (const file_family &) = delete; // never copy

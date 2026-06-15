@@ -2,6 +2,7 @@
 #include "tree_sitter/api.h"
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <memory>
 #include <string>
 
@@ -56,8 +57,6 @@ std::shared_ptr<node_t>
   return n;
 }
 
-// Assuming you have a function to initialize the parser with the correct
-// language
 std::shared_ptr<node_t> parse_file(const std::filesystem::path &filename,
                                    const std::string           &language)
 {
@@ -65,11 +64,17 @@ std::shared_ptr<node_t> parse_file(const std::filesystem::path &filename,
   TSParser *parser = ts_parser_new();
   if (language == "java")
   {
-    ts_parser_set_language(parser, tree_sitter_java());
+    if (!ts_parser_set_language(parser, tree_sitter_java()))
+    {
+      std::cerr << "Error setting language" << std::endl;
+    };
   }
   else if (language == "cpp")
   {
-    ts_parser_set_language(parser, tree_sitter_cpp());
+    if (!ts_parser_set_language(parser, tree_sitter_cpp()))
+    {
+      std::cerr << "Error setting language" << std::endl;
+    };
   }
   else
   {

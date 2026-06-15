@@ -1,4 +1,5 @@
 #include "file_discovery.hpp"
+#include "core.hpp"
 #include <algorithm>
 #include <filesystem>
 #include <map>
@@ -14,23 +15,23 @@ const std::map<language, std::set<std::string>> language_to_file_suffix_map {
 void add_file_to_map(const std::string           &file_family_name,
                      const std::string           &variant_name,
                      const std::filesystem::path &absolute_path,
-                     std::map<std::string, std::vector<file_variant>>
+                     std::map<std::string, std::vector<file_variant_info>>
                          &file_family_name_to_variant_paths_map)
 {
   file_family_name_to_variant_paths_map[file_family_name].emplace_back(
       variant_name, absolute_path);
 }
 
-std::vector<file_family>
-    transform_to_vector(std::map<std::string, std::vector<file_variant>>
+std::vector<file_family_info>
+    transform_to_vector(std::map<std::string, std::vector<file_variant_info>>
                             &file_family_name_to_variant_paths_map)
 {
-  std::vector<file_family> data;
+  std::vector<file_family_info> data;
   data.reserve(file_family_name_to_variant_paths_map.size());
   for (auto &key_value : file_family_name_to_variant_paths_map)
   {
     data.push_back(
-        file_family { key_value.first, std::move(key_value.second) });
+        file_family_info { key_value.first, std::move(key_value.second) });
   }
   return data;
 }
@@ -67,9 +68,9 @@ std::string
   return filename;
 }
 
-file_families discover_files(const options &options)
+std::vector<file_family_info> discover_files(const options &options)
 {
-  std::map<std::string, std::vector<file_variant>>
+  std::map<std::string, std::vector<file_variant_info>>
       file_family_name_to_variant_paths_map {};
   for (const auto &directory_entry : fs::directory_iterator(options.path))
   {

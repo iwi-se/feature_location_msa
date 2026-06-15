@@ -1,5 +1,6 @@
 #include "alignment.hpp"
 #include "arguments.hpp"
+#include "core.hpp"
 #include "file_discovery.hpp"
 #include "output.hpp"
 #include "postprocessing.hpp"
@@ -27,9 +28,9 @@ int main(int argc, char* argv[])
   std::for_each(std::execution::par,
                 file_families.begin(),
                 file_families.end(),
-                [&](auto&& file_family_p)
+                [options, &processed_count, total](const auto& family_info)
                 {
-                  auto file_family { std::move(file_family_p) };
+                  file_family file_family { family_info };
 
                   load_asts(file_family.variants, options);
                   build_token_tables(file_family.variants);

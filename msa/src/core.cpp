@@ -57,6 +57,14 @@ file_family::file_family(const std::string          &name,
     , variants { std::move(variants) }
 { }
 
+file_family::file_family(const file_family_info &info): name { info.name }
+{
+  for (const auto &variant_info : info.variants)
+  {
+    variants.push_back({ variant_info.variant, variant_info.filepath });
+  }
+}
+
 file_family::file_family(file_family &&other)
     : name { other.name }
     , variants { std::move(other.variants) }
