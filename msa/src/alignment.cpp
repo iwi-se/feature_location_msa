@@ -3,6 +3,7 @@
 #include "helper.hpp"
 #include "preprocessing.hpp"
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <functional>
 #include <unordered_set>
@@ -411,4 +412,69 @@ void align_file_variants(std::vector<file_variant>& variants,
     aligned_sequences.push_back(
         &(*variants[next_most_similar_index].m_token_table));
   }
+}
+
+std::vector<std::vector<alignment_token>*>
+    align_guide_tree_node(guide_tree_node&                    node,
+                          file_family&                        family,
+                          const hash_count&                   hash_count,
+                          std::unordered_map<size_t, double>& cache)
+{
+  //
+  // Leaf
+  //
+  if (node.is_leaf())
+  {
+    return { &(*family.variants[node.variant_index.value()].m_token_table) };
+  }
+
+  //
+  // Recursively align children first
+  //
+  auto left_sequences
+      = align_guide_tree_node(*node.left, family, hash_count, cache);
+
+  auto right_sequences
+      = align_guide_tree_node(*node.right, family, hash_count, cache);
+
+  //
+  // Build profiles for both subtrees
+  //
+  auto left_profile = merge_aligned_sequences(left_sequences);
+
+  auto right_profile = merge_aligned_sequences(right_sequences);
+
+  //
+  // Align the profiles
+  //
+  align_pairwise(left_profile, right_profile, hash_count, cache);
+
+  //
+  // Push gaps back into descendants
+  //
+  realign_aligned_sequence(left_sequences, left_profile);
+
+  realign_aligned_sequence(right_sequences, right_profile);
+
+  //
+  // Return all sequences belonging to this subtree
+  //
+  left_sequences.insert(
+      left_sequences.end(), right_sequences.begin(), right_sequences.end());
+
+  return left_sequences;
+}
+
+void align_guide_tree(file_family& family, const options& options)
+{
+  if (!family.m_guide_tree.has_value() || !family.m_guide_tree->root)
+  {
+    return;
+  }
+
+  auto hash_count = build_hash_count(family.variants);
+
+  std::unordered_map<size_t, double> cache {};
+
+  align_guide_tree_node(*family.m_guide_tree->root, family, hash_count, cache);
 }

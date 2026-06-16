@@ -39,9 +39,10 @@ int main(int argc, char* argv[])
                   calculate_ngram_hashes(file_family.variants, options);
 
                   build_guide_tree(file_family, options);
-                  print_guide_tree(*file_family.m_guide_tree, file_family);
+                  // print_guide_tree(*file_family.m_guide_tree, file_family);
 
-                  align_file_variants(file_family.variants, options);
+                  // align_file_variants(file_family.variants, options);
+                  align_guide_tree(file_family, options);
 
                   apply_filler_size(file_family.variants);
 

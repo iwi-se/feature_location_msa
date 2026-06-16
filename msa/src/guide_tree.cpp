@@ -23,10 +23,10 @@ std::vector<size_t> merge_ngrams(const std::vector<size_t>& a,
 
 double cluster_similarity(const cluster& a, const cluster& b)
 {
-  // average-ish proxy: compare merged sets
-  size_t common = count_common_ngrams(a.merged_ngrams, b.merged_ngrams);
-  size_t denom  = std::max(a.merged_ngrams.size(), b.merged_ngrams.size());
-  return denom ? double(common) / double(denom) : 0.0;
+  return (a.merged_ngrams == b.merged_ngrams
+              ? std::numeric_limits<double>::max()
+              : static_cast<double>(
+                    count_common_ngrams(a.merged_ngrams, b.merged_ngrams)));
 }
 
 void build_guide_tree(file_family& family, const options& options)

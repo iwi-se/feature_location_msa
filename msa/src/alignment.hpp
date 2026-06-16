@@ -5,3 +5,5 @@
 
 void align_file_variants(std::vector<file_variant>& variants,
                          const options&             options);
+
+void align_guide_tree(file_family& family, const options& options);
