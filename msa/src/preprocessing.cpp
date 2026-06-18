@@ -1,23 +1,101 @@
 #include "preprocessing.hpp"
 #include "core.hpp"
 #include "parser.hpp"
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
+#include <map>
+
+struct cached_ast
+{
+    std::filesystem::path   representative_file;
+    std::shared_ptr<node_t> ast;
+};
+
+using ast_cache = std::unordered_map<std::uintmax_t, std::vector<cached_ast>>;
+
+// Stolen from here:
+// https://stackoverflow.com/questions/6163611/compare-two-files
+bool compare_files(const std::filesystem::path &p1,
+                   const std::filesystem::path &p2)
+{
+  std::ifstream f1(p1, std::ifstream::binary | std::ifstream::ate);
+  std::ifstream f2(p2, std::ifstream::binary | std::ifstream::ate);
+
+  if (f1.fail() || f2.fail())
+  {
+    return false; // file problem
+  }
+
+  if (f1.tellg() != f2.tellg())
+  {
+    return false; // size mismatch
+  }
+
+  // seek back to beginning and use std::equal to compare contents
+  f1.seekg(0, std::ifstream::beg);
+  f2.seekg(0, std::ifstream::beg);
+  return std::equal(std::istreambuf_iterator<char>(f1.rdbuf()),
+                    std::istreambuf_iterator<char>(),
+                    std::istreambuf_iterator<char>(f2.rdbuf()));
+}
+
+std::shared_ptr<node_t> find_existing_ast(const std::filesystem::path &filepath,
+                                          ast_cache                   &cache)
+{
+  const auto size = std::filesystem::file_size(filepath);
+
+  auto bucket_it = cache.find(size);
+  if (bucket_it == cache.end())
+  {
+    return {};
+  }
+
+  for (const auto &candidate : bucket_it->second)
+  {
+    if (compare_files(filepath, candidate.representative_file))
+    {
+      return candidate.ast;
+    }
+  }
+
+  return {};
+}
 
 void load_asts(std::vector<file_variant> &variants, const options &options)
 {
-  for (auto &file_variant : variants)
+  ast_cache cache;
+
+  for (auto &variant : variants)
   {
     try
     {
-      auto ast { parse_file(file_variant.filepath,
-                            render_language(options.m_language)) };
-      file_variant.ast = ast;
+      if (auto existing_ast = find_existing_ast(variant.filepath, cache))
+      {
+        variant.ast = std::move(existing_ast);
+        continue;
+      }
+
+      auto ast
+          = parse_file(variant.filepath, render_language(options.m_language));
+
+      variant.ast = ast;
+
+      const auto size = std::filesystem::file_size(variant.filepath);
+
+      cache[size].push_back(
+          { .representative_file = variant.filepath, .ast = std::move(ast) });
+    }
+    catch (const std::exception &e)
+    {
+      std::cerr << "Unable to parse file " << variant.filepath << " of variant "
+                << variant.variant << ": " << e.what() << '\n';
     }
     catch (...)
     {
-      std::cerr << "Unable to parse file " << file_variant.filepath
-                << " of variant " << file_variant.variant << "." << std::endl;
+      std::cerr << "Unable to parse file " << variant.filepath << " of variant "
+                << variant.variant << ".\n";
     }
   }
 }

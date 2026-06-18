@@ -229,9 +229,8 @@ double score(const alignment_token&              a,
 std::pair<size_t, size_t> calculate_l_range(size_t k, size_t len1, size_t len2)
 {
   double k_rel { static_cast<double>(k) / static_cast<double>(len1) };
-  double l_begin { std::max(1.0, (k_rel - 0.1) * len2) };
-  double l_end { std::min(static_cast<double>(len2 - 1),
-                          (k_rel + 0.1) * len2) };
+  double l_begin { std::max(1.0, (k_rel - 0.3) * len2) };
+  double l_end { std::min(static_cast<double>(len2), (k_rel + 0.3) * len2) };
   return { l_begin, l_end };
 }
 
@@ -254,7 +253,18 @@ void align_pairwise(std::vector<alignment_token>&       seq1,
 
     for (size_t k = 1; k <= len1; ++k)
     {
-      std::pair<size_t, size_t> l_range { calculate_l_range(k, len1, len2) };
+      std::pair<size_t, size_t> l_range;
+      if (std::abs(1.0
+                   - (static_cast<double>(seq1.size())
+                      / static_cast<double>(seq2.size())))
+          < 0.2)
+      {
+        l_range = calculate_l_range(k, len1, len2);
+      }
+      else
+      {
+        l_range = { 1, len2 };
+      }
 
       for (size_t l = l_range.first; l <= l_range.second; ++l)
       {
