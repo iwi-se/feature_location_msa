@@ -289,7 +289,7 @@ const std::vector<std::string> &node_t::get_node_types() const
   return all_types;
 }
 
-std::vector<std::shared_ptr<node_t>> node_t::get_leaves()
+std::vector<std::weak_ptr<node_t>> &node_t::get_leaves()
 {
   if (connected_leaves.empty())
   {
@@ -308,12 +308,7 @@ std::vector<std::shared_ptr<node_t>> node_t::get_leaves()
     }
   }
 
-  std::vector<std::shared_ptr<node_t>> connectedLeavesShared;
-  for (auto l : connected_leaves)
-  {
-    connectedLeavesShared.push_back(l.lock());
-  }
-  return connectedLeavesShared;
+  return connected_leaves;
 }
 
 std::vector<std::shared_ptr<node_t>> node_t::get_ancestors()

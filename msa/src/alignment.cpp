@@ -64,7 +64,7 @@ std::vector<size_t> getHashTokens(const std::shared_ptr<node_t>& n)
   result.reserve(1000);
   for (auto& l : n->get_leaves())
   {
-    result.emplace_back(l->get_subtree_hash());
+    result.emplace_back(l.lock()->get_subtree_hash());
   }
   return result;
 }

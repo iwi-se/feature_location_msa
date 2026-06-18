@@ -28,7 +28,7 @@ std::vector<alignment_token> build_token_table(std::shared_ptr<node_t> &ast)
   for (auto &leaf : ast->get_leaves())
   {
     token_table.push_back(
-        alignment_token { alignment_token::token_kind::node, leaf });
+        alignment_token { alignment_token::token_kind::node, leaf.lock() });
   }
   return token_table;
 }
