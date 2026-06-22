@@ -63,6 +63,7 @@ class node_t: public std::enable_shared_from_this<node_t>
     std::shared_ptr<node_t> get_parent();
     std::shared_ptr<node_t> get_root();
     std::vector<std::weak_ptr<node_t>>  &get_leaves();
+    std::set<size_t>                    &get_leaf_hashes();
     bool                                 get_is_in_intersection();
     void                                 set_is_in_intersection();
     std::vector<std::shared_ptr<node_t>> subtrees_not_in_intersection();
@@ -94,6 +95,7 @@ class node_t: public std::enable_shared_from_this<node_t>
     node_position                        m_node_position;
     std::vector<std::string>             all_types {};
     std::vector<std::weak_ptr<node_t>>   connected_leaves {};
+    std::set<size_t>                     connected_leaf_hashes {};
     bool                                 is_in_intersection { false };
     std::set<size_t>                     feature_affiliations {};
 

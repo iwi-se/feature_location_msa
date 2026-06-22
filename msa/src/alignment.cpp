@@ -59,16 +59,6 @@ std::pair<size_t, size_t> find_most_similar_pair(
   return { best_i, best_j };
 }
 
-std::set<size_t> getHashTokens(const std::shared_ptr<node_t>& n)
-{
-  std::set<size_t> result {};
-  for (auto& l : n->get_leaves())
-  {
-    result.emplace(l.lock()->get_subtree_hash());
-  }
-  return result;
-}
-
 size_t scoreLcsCount(const std::set<size_t>& lcs, const hash_count& hash_count)
 {
   size_t score {};
@@ -141,8 +131,8 @@ double subtreeSimilarity(const std::shared_ptr<node_t>&      n1,
   }
   else
   {
-    auto             n1Leaves { getHashTokens(n1) };
-    auto             n2Leaves { getHashTokens(n2) };
+    auto             n1Leaves { n1->get_leaf_hashes() };
+    auto             n2Leaves { n2->get_leaf_hashes() };
     auto             n1LeavesScore { scoreLcsCount(n1Leaves, hashCount) };
     auto             n2LeavesScore { scoreLcsCount(n2Leaves, hashCount) };
     std::set<size_t> lcsResult {};

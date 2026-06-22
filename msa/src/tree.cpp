@@ -311,6 +311,18 @@ std::vector<std::weak_ptr<node_t>> &node_t::get_leaves()
   return connected_leaves;
 }
 
+std::set<size_t> &node_t::get_leaf_hashes()
+{
+  if (connected_leaf_hashes.empty())
+  {
+    for (auto &l : get_leaves())
+    {
+      connected_leaf_hashes.emplace(l.lock()->get_subtree_hash());
+    }
+  }
+  return connected_leaf_hashes;
+}
+
 std::vector<std::shared_ptr<node_t>> node_t::get_ancestors()
 {
   std::vector<std::shared_ptr<node_t>> ancestors;
