@@ -269,29 +269,23 @@ operation_t cli_arguments(int argc, char *argv[])
   }
   else if (operation_type == "analyze")
   {
-    if (argc < 4)
+    if (argc < 5)
     {
       argument_error(argv);
     }
-    std::string msa_path { argv[2] };
-    std::string expressions_file { argv[3] };
+    std::string           msa_path { argv[2] };
+    std::filesystem::path isolation_executable { argv[3] };
+    std::filesystem::path spl_specification_file { argv[4] };
     return operation_t { operation_t::operation_type_t::analyze,
                          msa_path,
-                         expressions_file };
+                         isolation_executable,
+                         spl_specification_file };
   }
   argument_error(argv);
   return operation_t {};
 }
 
-void print_systems(const msa_representation_t &msa)
-{
-  // std::cout << "Found " << msa.get_system_names().size() << " systems"
-  //           << std::endl;
-  // for (const auto &system_name : msa.get_system_names())
-  // {
-  //   std::cout << system_name << std::endl;
-  // }
-}
+void print_systems(operation_t /*op*/) { }
 
 std::vector<std::string> parse_block(const std::string &block,
                                      const char        &separator)
@@ -590,7 +584,7 @@ std::string get_feature_from_systems(const std::vector<size_t> &systems,
   }
 }
 
-void analyze(operation_t op, const msa_representation_t &msa)
+void analyze(operation_t op)
 {
   std::string output_directory { "output" };
   if (!std::filesystem::exists(output_directory))
@@ -602,70 +596,91 @@ void analyze(operation_t op, const msa_representation_t &msa)
     for (const auto &entry :
          std::filesystem::directory_iterator(output_directory))
     {
-      // Check if it's a file (not a subdirectory)
       if (std::filesystem::is_regular_file(entry.path()))
       {
-        // Delete the file
         std::filesystem::remove(entry.path());
         std::cout << "Deleted: " << entry.path().filename() << "\n";
       }
     }
   }
 
-  std::set<std::string> features;
+  std::map<std::string, output_lines_t> accumulator {};
 
-  for (const auto &file : msa.internal_rep)
+  auto process_one_file = [&](const std::filesystem::path &msa_file_path)
   {
-    for (size_t token_index { 0 };
-         token_index < file.second.at(0ul).tokens.size();
-         ++token_index)
+    auto [spl_file, systems] = parse_file_msa(msa_file_path);
+
+    if (systems.empty())
     {
-      std::vector<size_t> systems;
-      for (const auto &system_id_and_tokens : file.second)
+      return;
+    }
+
+    const size_t col_count { systems.begin()->second.tokens.size() };
+    for (size_t col {}; col < col_count; ++col)
+    {
+      std::vector<size_t> present {};
+      for (const auto &[sys_id, sys_tok] : systems)
       {
-        if (system_id_and_tokens.second.tokens[token_index].is_node())
+        if (sys_tok.tokens[col].is_node())
         {
-          systems.push_back(system_id_and_tokens.first);
+          present.push_back(sys_id);
         }
       }
-      const std::string feature { get_feature_from_systems(systems, op) };
-      features.insert(feature);
-      for (const auto &system_id_and_tokens : file.second)
+      if (present.empty())
       {
-        if (system_id_and_tokens.second.tokens[token_index].is_node())
+        continue;
+      }
+      const std::string feat { get_feature_from_systems(present, op) };
+      for (auto &[sys_id, sys_tok] : systems)
+      {
+        if (sys_tok.tokens[col].is_node())
         {
-          system_id_and_tokens.second.tokens[token_index].node->feature
-              = feature;
+          sys_tok.tokens[col].node->feature = feat;
         }
       }
     }
+
+    for (auto &[sys_id, sys_tok] : systems)
+    {
+      std::map<std::string, std::vector<node_t *>> nodes_by_feature {};
+      for (auto &tok : sys_tok.tokens)
+      {
+        if (tok.is_node())
+        {
+          nodes_by_feature[tok.node->feature].push_back(tok.node);
+        }
+      }
+      for (auto &[feat, nodes] : nodes_by_feature)
+      {
+        output_lines_t lines { build_argouml_benchmark_format_for_file(nodes) };
+        accumulator[feat].insert_many(lines);
+      }
+    }
+  };
+
+  if (std::filesystem::is_directory(op.msa_path))
+  {
+    for (const auto &entry : std::filesystem::directory_iterator(op.msa_path))
+    {
+      process_one_file(entry.path());
+    }
+  }
+  else
+  {
+    process_one_file(op.msa_path);
   }
 
-  // for (const auto &expression : expressions)
-  // {
-  //   auto parsed_expression { parse_expression(expression.second) };
-  //   auto results_per_file { evaluate_expression(parsed_expression, msa) };
-  //
-  //   if (msa.lang == "java")
-  //   {
-  //     auto benchmark_format_per_file { build_argouml_benchmark_format(
-  //         results_per_file) };
-  //
-  //     auto output_file { std::ofstream(output_directory + "/" +
-  //     expression.first
-  //                                      + ".txt") };
-  //     for (const auto &res : benchmark_format_per_file)
-  //     {
-  //       output_file << res.second;
-  //     }
-  //
-  //     output_file.close();
-  //   }
-  // }
+  for (auto &[feat, lines] : accumulator)
+  {
+    std::string   sanitized { std::regex_replace(feat, std::regex(" "), "_") };
+    std::ofstream out(output_directory + "/" + sanitized + ".txt");
+    out << lines.render();
+  }
 }
 
-void render(operation_t op, const msa_representation_t &msa)
+void render(operation_t op)
 {
+  auto                  msa { parse_msa(op.msa_path) };
   std::set<std::string> features;
 
   for (const auto &file : msa.internal_rep)
@@ -773,18 +788,17 @@ void render(operation_t op, const msa_representation_t &msa)
 int main(int argc, char *argv[])
 {
   operation_t operation { cli_arguments(argc, argv) };
-  auto        msa { parse_msa(operation.msa_path) };
 
   switch (operation.operation_type)
   {
     case operation_t::operation_type_t::print_system_names :
-      print_systems(msa);
+      print_systems(operation);
       break;
     case operation_t::operation_type_t::analyze :
-      analyze(operation, msa);
+      analyze(operation);
       break;
     case operation_t::operation_type_t::render :
-      render(operation, msa);
+      render(operation);
       break;
   }
 
