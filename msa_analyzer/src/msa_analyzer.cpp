@@ -664,13 +664,18 @@ void analyze(operation_t op)
 
   if (std::filesystem::is_directory(op.msa_path))
   {
+    std::vector<std::filesystem::path> files {};
     for (const auto &entry : std::filesystem::directory_iterator(op.msa_path))
     {
-      if (entry.path().extension() != ".output")
+      if (entry.path().extension() == ".output")
       {
-        continue;
+        files.push_back(entry.path());
       }
-      process_one_file(entry.path());
+    }
+    for (size_t i {}; i < files.size(); ++i)
+    {
+      std::cout << "Processing file " << (i + 1) << "/" << files.size() << "\n";
+      process_one_file(files[i]);
     }
   }
   else
