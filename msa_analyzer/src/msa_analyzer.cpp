@@ -85,6 +85,7 @@ bool parse_system_msa(std::ifstream                        &file,
   if (file)
   {
     std::getline(file, system_name);
+    if (!system_name.empty() && system_name.back() == '\r') system_name.pop_back();
     try
     {
       system_index = std::stoul(system_name);
@@ -103,6 +104,7 @@ bool parse_system_msa(std::ifstream                        &file,
   if (file)
   {
     std::getline(file, system_file);
+    if (!system_file.empty() && system_file.back() == '\r') system_file.pop_back();
   }
   else
   {
@@ -172,6 +174,7 @@ std::pair<spl_file_t, std::map<system_t, system_tokens_t>>
 
   spl_file_t spl_file {};
   std::getline(file, spl_file);
+  if (!spl_file.empty() && spl_file.back() == '\r') spl_file.pop_back();
 
   std::string lang { get_lang_from_file_path(spl_file) };
   std::map<system_t, system_tokens_t> systems {};
