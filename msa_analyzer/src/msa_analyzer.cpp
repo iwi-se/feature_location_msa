@@ -1,12 +1,16 @@
 #include "argouml_benchmark_format.hpp"
 #include "parser.hpp"
 #include "tree.hpp"
+#include <algorithm>
 #include <array>
+#include <atomic>
+#include <execution>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <regex>
 #include <sstream>
 #include <stack>
@@ -571,18 +575,23 @@ std::string get_feature_from_systems(const std::vector<size_t> &systems,
                                      const operation_t         &operation)
 {
   static std::map<std::string, std::string> system_feature_map {};
+  static std::mutex                         cache_mutex {};
   std::string systems_hash { hash_systems(systems) };
 
-  if (system_feature_map.contains(systems_hash))
   {
-    return system_feature_map[systems_hash];
+    std::lock_guard lock { cache_mutex };
+    if (system_feature_map.contains(systems_hash))
+    {
+      return system_feature_map[systems_hash];
+    }
   }
-  else
+
+  std::string isolation_call { build_isolation_call(operation, systems_hash) };
+  std::string result { exec_and_capture(isolation_call) };
+  result.pop_back();
+
   {
-    std::string isolation_call { build_isolation_call(operation,
-                                                      systems_hash) };
-    std::string result { exec_and_capture(isolation_call) };
-    result.pop_back();
+    std::lock_guard lock { cache_mutex };
     system_feature_map.insert(std::make_pair(systems_hash, result));
     return result;
   }
@@ -609,6 +618,7 @@ void analyze(operation_t op)
   }
 
   std::map<std::string, output_lines_t> accumulator {};
+  std::mutex                            accumulator_mutex {};
 
   auto process_one_file = [&](const std::filesystem::path &msa_file_path)
   {
@@ -657,6 +667,7 @@ void analyze(operation_t op)
       for (auto &[feat, nodes] : nodes_by_feature)
       {
         output_lines_t lines { build_argouml_benchmark_format_for_file(nodes) };
+        std::lock_guard lock { accumulator_mutex };
         accumulator[feat].insert_many(lines);
       }
     }
@@ -672,11 +683,18 @@ void analyze(operation_t op)
         files.push_back(entry.path());
       }
     }
-    for (size_t i {}; i < files.size(); ++i)
-    {
-      std::cout << "Processing file " << (i + 1) << "/" << files.size() << "\n";
-      process_one_file(files[i]);
-    }
+    const size_t        total { files.size() };
+    std::atomic<size_t> progress { 0 };
+    std::for_each(
+        std::execution::par,
+        files.begin(),
+        files.end(),
+        [&](const std::filesystem::path &path)
+        {
+          size_t n { ++progress };
+          std::cout << "Processing file " << n << "/" << total << "\n";
+          process_one_file(path);
+        });
   }
   else
   {
