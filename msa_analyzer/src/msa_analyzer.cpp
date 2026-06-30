@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <oneapi/tbb/global_control.h>
 #include <regex>
 #include <sstream>
 #include <stack>
@@ -70,7 +71,7 @@ using system_t   = size_t;
 
 struct system_tokens_t
 {
-    std::unique_ptr<node_t>        root;
+    std::shared_ptr<node_t>        root;
     std::vector<alignment_token_t> tokens;
 };
 
@@ -80,9 +81,11 @@ struct msa_representation_t
     std::map<spl_file_t, std::map<system_t, system_tokens_t>> internal_rep {};
 };
 
-bool parse_system_msa(std::ifstream                        &file,
-                      std::pair<system_t, system_tokens_t> &out,
-                      const std::string                    &lang)
+bool parse_system_msa(
+    std::ifstream                                  &file,
+    std::pair<system_t, system_tokens_t>           &out,
+    const std::string                              &lang,
+    std::map<std::string, std::shared_ptr<node_t>> &tree_cache)
 {
   std::string system_name {};
   size_t      system_index {};
@@ -113,7 +116,17 @@ bool parse_system_msa(std::ifstream                        &file,
     return false;
   }
 
-  auto tree { parse_file(system_file, lang) };
+  std::shared_ptr<node_t> tree;
+  auto                    cache_it = tree_cache.find(system_file);
+  if (cache_it != tree_cache.end())
+  {
+    tree = cache_it->second;
+  }
+  else
+  {
+    tree                    = parse_file(system_file, lang);
+    tree_cache[system_file] = tree;
+  }
   auto leaves { tree->get_leafs() };
 
   size_t                         i {};
@@ -178,10 +191,11 @@ std::pair<spl_file_t, std::map<system_t, system_tokens_t>>
   std::getline(file, spl_file);
 
   std::string lang { get_lang_from_file_path(spl_file) };
-  std::map<system_t, system_tokens_t> systems {};
+  std::map<system_t, system_tokens_t>            systems {};
+  std::map<std::string, std::shared_ptr<node_t>> tree_cache {};
 
   std::pair<system_t, system_tokens_t> system {};
-  while (parse_system_msa(file, system, lang))
+  while (parse_system_msa(file, system, lang, tree_cache))
   {
     systems.insert(std::move(system));
   }
@@ -685,16 +699,16 @@ void analyze(operation_t op)
     }
     const size_t        total { files.size() };
     std::atomic<size_t> progress { 0 };
-    std::for_each(
-        std::execution::par,
-        files.begin(),
-        files.end(),
-        [&](const std::filesystem::path &path)
-        {
-          size_t n { ++progress };
-          std::cout << "Processing file " << n << "/" << total << "\n";
-          process_one_file(path);
-        });
+    std::for_each(std::execution::par,
+                  files.begin(),
+                  files.end(),
+                  [&](const std::filesystem::path &path)
+                  {
+                    size_t n { ++progress };
+                    std::cout << "Processing file " << n << "/" << total
+                              << "\n";
+                    process_one_file(path);
+                  });
   }
   else
   {
@@ -818,7 +832,8 @@ void render(operation_t op)
 
 int main(int argc, char *argv[])
 {
-  operation_t operation { cli_arguments(argc, argv) };
+  operation_t         operation { cli_arguments(argc, argv) };
+  tbb::global_control gc(tbb::global_control::max_allowed_parallelism, 6);
 
   switch (operation.operation_type)
   {
