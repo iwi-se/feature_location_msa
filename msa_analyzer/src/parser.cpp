@@ -23,33 +23,28 @@ std::string get_node_text(const TSNode      &ts_node,
   return file_contents.substr(start_byte, end_byte - start_byte);
 }
 
-node_t *convert_ts_node_to_node(TSNode                       ts_node,
-                                const std::filesystem::path &filepath,
-                                const std::string           &file_contents)
+node_t *convert_ts_node_to_node(
+    TSNode                                              ts_node,
+    const std::shared_ptr<const std::filesystem::path> &filepath,
+    const std::string                                  &file_contents)
 {
-  // Extract node data
   const char *type     = ts_node_type(ts_node);
   bool        is_named = ts_node_is_named(ts_node);
 
-  // Create SourcePosition
-  source_position_t source_position = source_position_t(
+  source_position_t source_position(
       filepath,
       { ts_node_start_point(ts_node).row, ts_node_start_point(ts_node).column },
       { ts_node_end_point(ts_node).row, ts_node_end_point(ts_node).column });
 
   std::string text = get_node_text(ts_node, file_contents);
 
-  // Create the Node
   auto node = new node_t(type, text, type, is_named, source_position);
 
-  // Recursively add children
   uint32_t child_count = ts_node_child_count(ts_node);
   for (uint32_t i = 0; i < child_count; i++)
   {
     TSNode child_ts_node = ts_node_child(ts_node, i);
-    auto   child_node
-        = convert_ts_node_to_node(child_ts_node, filepath, file_contents);
-    node->add_child(child_node);
+    node->add_child(convert_ts_node_to_node(child_ts_node, filepath, file_contents));
   }
 
   return node;
@@ -86,8 +81,8 @@ std::unique_ptr<node_t> parse_file(const std::filesystem::path &filename,
       = ts_parser_parse_string(parser, nullptr, code.c_str(), code.size());
   TSNode root_node = ts_tree_root_node(tree);
 
-  // Convert the root TSNode to our Node structure
-  node_t *root = convert_ts_node_to_node(root_node, filename, code);
+  auto    shared_path = std::make_shared<const std::filesystem::path>(filename);
+  node_t *root        = convert_ts_node_to_node(root_node, shared_path, code);
   root->calculate_subtree_hashes();
 
   // Clean up

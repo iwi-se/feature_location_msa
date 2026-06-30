@@ -10,15 +10,15 @@
 class source_position_t
 {
   public:
-    source_position_t(const std::filesystem::path     &file,
-                      const std::pair<size_t, size_t> &start_position,
-                      const std::pair<size_t, size_t> &end_position)
-        : file(file)
+    source_position_t(std::shared_ptr<const std::filesystem::path> file,
+                      const std::pair<size_t, size_t>             &start_position,
+                      const std::pair<size_t, size_t>             &end_position)
+        : file(std::move(file))
         , start_position(start_position)
         , end_position(end_position)
     { }
 
-    std::filesystem::path     get_file() const;
+    const std::filesystem::path &get_file() const;
     std::pair<size_t, size_t> get_start_position() const;
     size_t                    get_start_line() const;
     size_t                    get_start_column() const;
@@ -29,7 +29,7 @@ class source_position_t
     bool                      operator== (const source_position_t &other) const;
     std::string               render() const;
   private:
-    std::filesystem::path     file;
+    std::shared_ptr<const std::filesystem::path> file;
     std::pair<size_t, size_t> start_position;
     std::pair<size_t, size_t> end_position;
 };

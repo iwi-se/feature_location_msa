@@ -4,7 +4,7 @@
 #include <memory>
 #include <stack>
 
-std::filesystem::path source_position_t::get_file() const { return file; }
+const std::filesystem::path &source_position_t::get_file() const { return *file; }
 
 std::pair<size_t, size_t> source_position_t::get_start_position() const {
   return start_position;
@@ -28,11 +28,11 @@ bool source_position_t::operator<(const source_position_t &other) const {
 
 bool source_position_t::operator==(const source_position_t &other) const {
   return start_position == other.start_position &&
-         end_position == other.end_position && file == other.file;
+         end_position == other.end_position && *file == *other.file;
 }
 
 std::string source_position_t::render() const {
-  return file.string() + "/" + std::to_string(start_position.first) + ":" +
+  return file->string() + "/" + std::to_string(start_position.first) + ":" +
          std::to_string(start_position.second) + "-" +
          std::to_string(end_position.first) + ":" +
          std::to_string(end_position.second);
