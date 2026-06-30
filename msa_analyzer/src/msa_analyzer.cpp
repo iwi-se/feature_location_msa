@@ -517,10 +517,27 @@ std::vector<node_t *>
 //   return result;
 // }
 
-std::string transform_and_feature(std::string feat)
+std::string transform_and_feature(const std::string &feat)
 {
-  replace_all(feat, " \xe2\x88\xa7 ", "_and_");
-  return feat;
+  const std::string        sep { " \xe2\x88\xa7 " };
+  std::vector<std::string> parts {};
+  size_t                   start {};
+  size_t                   pos {};
+  while ((pos = feat.find(sep, start)) != std::string::npos)
+  {
+    parts.push_back(feat.substr(start, pos - start));
+    start = pos + sep.size();
+  }
+  parts.push_back(feat.substr(start));
+  std::sort(parts.begin(), parts.end());
+  std::string result {};
+  for (size_t i {}; i < parts.size(); ++i)
+  {
+    if (i > 0)
+      result += "_and_";
+    result += parts[i];
+  }
+  return result;
 }
 
 std::vector<std::string> expand_or_feature(const std::string &feat)
