@@ -517,6 +517,27 @@ std::vector<node_t *>
 //   return result;
 // }
 
+std::string transform_and_feature(std::string feat)
+{
+  replace_all(feat, " \xe2\x88\xa7 ", "_and_");
+  return feat;
+}
+
+std::vector<std::string> expand_or_feature(const std::string &feat)
+{
+  const std::string        sep { " \xe2\x88\xa8 " };
+  std::vector<std::string> parts {};
+  size_t                   start {};
+  size_t                   pos {};
+  while ((pos = feat.find(sep, start)) != std::string::npos)
+  {
+    parts.push_back(feat.substr(start, pos - start));
+    start = pos + sep.size();
+  }
+  parts.push_back(feat.substr(start));
+  return parts;
+}
+
 void print_nodes(const std::vector<node_t *> &nodes)
 {
   for (const auto &node : nodes)
@@ -659,7 +680,9 @@ void analyze(operation_t op)
       {
         continue;
       }
-      const std::string feat { get_feature_from_systems(present, op) };
+      const std::string feat {
+        transform_and_feature(get_feature_from_systems(present, op))
+      };
       for (auto &[sys_id, sys_tok] : systems)
       {
         if (sys_tok.tokens[col].is_node())
@@ -676,7 +699,10 @@ void analyze(operation_t op)
       {
         if (tok.is_node())
         {
-          nodes_by_feature[tok.node->feature].push_back(tok.node);
+          for (const auto &f : expand_or_feature(tok.node->feature))
+          {
+            nodes_by_feature[f].push_back(tok.node);
+          }
         }
       }
       for (auto &[feat, nodes] : nodes_by_feature)
@@ -743,7 +769,9 @@ void render(operation_t op)
           systems.push_back(system_id_and_tokens.first);
         }
       }
-      const std::string feature { get_feature_from_systems(systems, op) };
+      const std::string feature {
+        transform_and_feature(get_feature_from_systems(systems, op))
+      };
       features.insert(feature);
       for (const auto &system_id_and_tokens : file.second)
       {
