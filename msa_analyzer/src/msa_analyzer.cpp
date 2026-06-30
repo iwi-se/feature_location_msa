@@ -530,7 +530,7 @@ std::string transform_and_feature(const std::string &feat)
   }
   parts.push_back(feat.substr(start));
   for (auto &p : parts)
-    replace_all(p, "\xe2\x8c\x90", "not_");
+    replace_all(p, "\xc2\xac", "not_");
   std::sort(parts.begin(), parts.end());
   std::string result {};
   for (size_t i {}; i < parts.size(); ++i)
@@ -743,6 +743,11 @@ void analyze(operation_t op)
         files.push_back(entry.path());
       }
     }
+    std::sort(files.begin(), files.end(),
+              [](const std::filesystem::path &a, const std::filesystem::path &b)
+              {
+                return std::filesystem::file_size(a) > std::filesystem::file_size(b);
+              });
     const size_t        total { files.size() };
     std::atomic<size_t> progress { 0 };
     std::for_each(std::execution::par,
