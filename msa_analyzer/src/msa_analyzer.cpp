@@ -529,6 +529,8 @@ std::string transform_and_feature(const std::string &feat)
     start = pos + sep.size();
   }
   parts.push_back(feat.substr(start));
+  for (auto &p : parts)
+    replace_all(p, "\xe2\x8c\x90", "not_");
   std::sort(parts.begin(), parts.end());
   std::string result {};
   for (size_t i {}; i < parts.size(); ++i)
