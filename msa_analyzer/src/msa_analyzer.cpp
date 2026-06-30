@@ -634,7 +634,8 @@ void analyze(operation_t op)
   std::map<std::string, output_lines_t> accumulator {};
   std::mutex                            accumulator_mutex {};
 
-  auto process_one_file = [&](const std::filesystem::path &msa_file_path)
+  auto process_one_file = [op, &accumulator, &accumulator_mutex](
+                              const std::filesystem::path &msa_file_path)
   {
     auto [spl_file, systems] = parse_file_msa(msa_file_path);
 
