@@ -17,6 +17,7 @@
 #include <stack>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -250,14 +251,36 @@ struct operation_t
     std::filesystem::path msa_path {};
     std::filesystem::path isolation_executable {};
     std::filesystem::path spl_specification_file {};
+    size_t                threads { 0 };
 };
 
 void argument_error(char *argv[])
 {
   std::cerr << "Usage: \n"
-            << argv[0] << "analyze <msa_outputs> <expressions_file>\n"
-            << argv[0] << "printSystemNames <msa_outputs>\n";
+            << argv[0] << " analyze <msa_outputs> <isolation_exe> <spl_spec> [--threads N]\n"
+            << argv[0] << " render <msa_outputs> <isolation_exe> <spl_spec>\n"
+            << argv[0] << " printSystemNames <msa_outputs>\n";
   exit(1);
+}
+
+size_t parse_threads_flag(int argc, char *argv[], int start)
+{
+  for (int i = start; i < argc - 1; ++i)
+  {
+    if (std::string(argv[i]) == "--threads")
+    {
+      try
+      {
+        return std::stoul(argv[i + 1]);
+      }
+      catch (...)
+      {
+        std::cerr << "--threads requires a positive integer\n";
+        exit(1);
+      }
+    }
+  }
+  return std::thread::hardware_concurrency();
 }
 
 operation_t cli_arguments(int argc, char *argv[])
@@ -277,7 +300,7 @@ operation_t cli_arguments(int argc, char *argv[])
   }
   else if (operation_type == "render")
   {
-    if (argc < 4)
+    if (argc < 5)
     {
       argument_error(argv);
     }
@@ -298,10 +321,12 @@ operation_t cli_arguments(int argc, char *argv[])
     std::string           msa_path { argv[2] };
     std::filesystem::path isolation_executable { argv[3] };
     std::filesystem::path spl_specification_file { argv[4] };
+    size_t                threads { parse_threads_flag(argc, argv, 5) };
     return operation_t { operation_t::operation_type_t::analyze,
                          msa_path,
                          isolation_executable,
-                         spl_specification_file };
+                         spl_specification_file,
+                         threads };
   }
   argument_error(argv);
   return operation_t {};
@@ -885,8 +910,11 @@ void render(operation_t op)
 
 int main(int argc, char *argv[])
 {
-  operation_t         operation { cli_arguments(argc, argv) };
-  tbb::global_control gc(tbb::global_control::max_allowed_parallelism, 6);
+  operation_t operation { cli_arguments(argc, argv) };
+  tbb::global_control gc(tbb::global_control::max_allowed_parallelism,
+                         operation.threads > 0
+                             ? operation.threads
+                             : std::thread::hardware_concurrency());
 
   switch (operation.operation_type)
   {

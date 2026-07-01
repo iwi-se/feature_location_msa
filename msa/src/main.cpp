@@ -15,10 +15,9 @@
 
 int main(int argc, char* argv[])
 {
-  // Limit threads
-  tbb::global_control gc(tbb::global_control::max_allowed_parallelism, 6);
-
   auto options { parse_cli_arguments(argc, argv) };
+  tbb::global_control gc(tbb::global_control::max_allowed_parallelism,
+                         options.threads);
   auto file_families { discover_files(options) };
 
   std::cout << "Discovered " << file_families.size() << " file families"
