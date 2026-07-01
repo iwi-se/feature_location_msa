@@ -4,53 +4,53 @@
 #include <memory>
 #include <stack>
 
-std::filesystem::path node_position::get_file() const
+std::filesystem::path node_position_t::get_file() const
 {
   return file;
 }
 
-std::pair<size_t, size_t> node_position::get_start_position() const
+std::pair<size_t, size_t> node_position_t::get_start_position() const
 {
   return start_position;
 }
 
-size_t node_position::get_start_line() const
+size_t node_position_t::get_start_line() const
 {
   return start_position.first;
 }
 
-size_t node_position::get_start_column() const
+size_t node_position_t::get_start_column() const
 {
   return start_position.second;
 }
 
-std::pair<size_t, size_t> node_position::get_end_position() const
+std::pair<size_t, size_t> node_position_t::get_end_position() const
 {
   return end_position;
 }
 
-size_t node_position::get_end_line() const
+size_t node_position_t::get_end_line() const
 {
   return end_position.first;
 }
 
-size_t node_position::get_end_column() const
+size_t node_position_t::get_end_column() const
 {
   return end_position.second;
 }
 
-bool node_position::operator< (const node_position &other) const
+bool node_position_t::operator< (const node_position_t &other) const
 {
   return start_position < other.start_position;
 }
 
-bool node_position::operator== (const node_position &other) const
+bool node_position_t::operator== (const node_position_t &other) const
 {
   return start_position == other.start_position
          && end_position == other.end_position && file == other.file;
 }
 
-std::string node_position::render() const
+std::string node_position_t::render() const
 {
   return file.string() + "/" + std::to_string(start_position.first) + ":"
          + std::to_string(start_position.second) + "-"
@@ -58,11 +58,11 @@ std::string node_position::render() const
          + std::to_string(end_position.second);
 }
 
-node_t::node_t(const std::string   &tag,
-               const std::string   &ts_text,
-               const std::string   &ts_type,
-               const bool          &ts_is_named,
-               const node_position &m_node_position_p)
+node_t::node_t(const std::string     &tag,
+               const std::string     &ts_text,
+               const std::string     &ts_type,
+               const bool            &ts_is_named,
+               const node_position_t &m_node_position_p)
     : tag(tag)
     , ts_text(ts_text)
     , ts_type(ts_type)
@@ -274,7 +274,7 @@ node_t::relative_position
   }
 }
 
-const node_position &node_t::get_node_position() const
+const node_position_t &node_t::get_node_position() const
 {
   return m_node_position;
 }

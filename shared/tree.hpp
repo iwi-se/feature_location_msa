@@ -5,12 +5,12 @@
 #include <string>
 #include <vector>
 
-class node_position
+class node_position_t
 {
   public:
-    node_position(const std::filesystem::path     &file,
-                  const std::pair<size_t, size_t> &start_position,
-                  const std::pair<size_t, size_t> &end_position)
+    node_position_t(const std::filesystem::path     &file,
+                    const std::pair<size_t, size_t> &start_position,
+                    const std::pair<size_t, size_t> &end_position)
         : file(file)
         , start_position(start_position)
         , end_position(end_position)
@@ -23,8 +23,8 @@ class node_position
     std::pair<size_t, size_t> get_end_position() const;
     size_t                    get_end_line() const;
     size_t                    get_end_column() const;
-    bool                      operator< (const node_position &other) const;
-    bool                      operator== (const node_position &other) const;
+    bool                      operator< (const node_position_t &other) const;
+    bool                      operator== (const node_position_t &other) const;
     std::string               render() const;
   private:
     std::filesystem::path     file;
@@ -35,11 +35,11 @@ class node_position
 class node_t: public std::enable_shared_from_this<node_t>
 {
   public:
-    node_t(const std::string   &tag,
-           const std::string   &ts_text,
-           const std::string   &ts_type,
-           const bool          &ts_is_named,
-           const node_position &node_position_p);
+    node_t(const std::string     &tag,
+           const std::string     &ts_text,
+           const std::string     &ts_type,
+           const bool            &ts_is_named,
+           const node_position_t &node_position_p);
 
     const std::string &get_tag() const;
     const std::string &get_ts_text() const;
@@ -57,7 +57,7 @@ class node_t: public std::enable_shared_from_this<node_t>
     const int &get_connected_leaf_weight();
     bool       is_ancestor_of(std::shared_ptr<node_t> node);
     std::vector<std::shared_ptr<node_t>>        get_ancestors();
-    const node_position                        &get_node_position() const;
+    const node_position_t                      &get_node_position() const;
     const std::vector<std::shared_ptr<node_t>> &get_children();
     std::shared_ptr<node_t> get_child_by_tag(const std::string &tag);
     std::shared_ptr<node_t> get_parent();
@@ -67,6 +67,8 @@ class node_t: public std::enable_shared_from_this<node_t>
     bool                                 get_is_in_intersection();
     void                                 set_is_in_intersection();
     std::vector<std::shared_ptr<node_t>> subtrees_not_in_intersection();
+
+    std::string feature {};
 
     enum class relative_position
     {
@@ -92,7 +94,7 @@ class node_t: public std::enable_shared_from_this<node_t>
     bool                                 ts_is_named;
     int                                  connected_leaf_weight {};
     std::size_t                          subtree_hash {};
-    node_position                        m_node_position;
+    node_position_t                      m_node_position;
     std::vector<std::string>             all_types {};
     std::vector<std::weak_ptr<node_t>>   connected_leaves {};
     std::set<size_t>                     connected_leaf_hashes {};

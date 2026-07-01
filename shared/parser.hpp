@@ -3,5 +3,5 @@
 #include "tree.hpp"
 #include <filesystem>
 
-std::shared_ptr<node_t> parse_file(const std::filesystem::path &filePath,
+std::shared_ptr<node_t> parse_file(const std::filesystem::path &file_path,
                                    const std::string           &language);

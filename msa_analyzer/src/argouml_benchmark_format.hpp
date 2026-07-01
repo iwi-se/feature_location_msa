@@ -38,4 +38,4 @@ class output_lines_t
 };
 
 output_lines_t build_argouml_benchmark_format_for_file(
-    std::vector<node_t *> included_tokens);
+    std::vector<std::shared_ptr<node_t>> included_tokens);

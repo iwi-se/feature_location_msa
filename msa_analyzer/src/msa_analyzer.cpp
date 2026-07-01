@@ -46,7 +46,7 @@ struct alignment_token_t
       node_t,
       filler_t
     } token_kind;
-    node_t *node { nullptr };
+    std::shared_ptr<node_t> node { nullptr };
 
     bool is_filler() const
     {
@@ -59,9 +59,9 @@ struct alignment_token_t
     }
 };
 
-alignment_token_t make_node_token(node_t *n)
+alignment_token_t make_node_token(std::weak_ptr<node_t> n)
 {
-  return { alignment_token_t::token_kind_t::node_t, n };
+  return { alignment_token_t::token_kind_t::node_t, n.lock() };
 }
 
 const alignment_token_t filler_t { alignment_token_t::token_kind_t::filler_t };
@@ -127,7 +127,7 @@ bool parse_system_msa(
     tree                    = parse_file(system_file, lang);
     tree_cache[system_file] = tree;
   }
-  auto leaves { tree->get_leafs() };
+  auto leaves { tree->get_leaves() };
 
   size_t                         i {};
   std::vector<alignment_token_t> tokens {};
@@ -480,10 +480,10 @@ std::vector<std::vector<alignment_token_t>> evaluate_expression_file(
   return result;
 }
 
-std::vector<node_t *>
+std::vector<std::shared_ptr<node_t>>
     alignment_tokens_to_nodes(std::vector<alignment_token_t> tokens)
 {
-  std::vector<node_t *> res;
+  std::vector<std::shared_ptr<node_t>> res;
   for (const auto &tok : tokens)
   {
     if (tok.is_node())
@@ -557,7 +557,7 @@ std::vector<std::string> expand_or_feature(const std::string &feat)
   return parts;
 }
 
-void print_nodes(const std::vector<node_t *> &nodes)
+void print_nodes(const std::vector<std::shared_ptr<node_t>> &nodes)
 {
   for (const auto &node : nodes)
   {
@@ -567,7 +567,7 @@ void print_nodes(const std::vector<node_t *> &nodes)
 }
 
 void print_results_per_file(
-    const std::map<std::string, std::vector<node_t *>> &results_per_file)
+    const std::map<std::string, std::vector<std::shared_ptr<node_t>>> &results_per_file)
 {
   for (const auto &file_result : results_per_file)
   {
@@ -713,7 +713,7 @@ void analyze(operation_t op)
 
     for (auto &[sys_id, sys_tok] : systems)
     {
-      std::map<std::string, std::vector<node_t *>> nodes_by_feature {};
+      std::map<std::string, std::vector<std::shared_ptr<node_t>>> nodes_by_feature {};
       for (auto &tok : sys_tok.tokens)
       {
         if (tok.is_node())
@@ -824,13 +824,13 @@ void render(operation_t op)
       {
         if (tok.is_node())
         {
-          while (line < tok.node->get_source_position().get_start_line())
+          while (line < tok.node->get_node_position().get_start_line())
           {
             content << "\n";
             line++;
             col = 0;
           }
-          while (col < tok.node->get_source_position().get_start_column())
+          while (col < tok.node->get_node_position().get_start_column())
           {
             content << "&nbsp;";
             col++;
@@ -847,10 +847,10 @@ void render(operation_t op)
 
           content << "<span title=\"" << f << "\" class=\"" << f << "\">"
                   << token_text << "</span>";
-          line += tok.node->get_source_position().get_end_line()
-                  - tok.node->get_source_position().get_start_line();
-          col += tok.node->get_source_position().get_end_column()
-                 - tok.node->get_source_position().get_start_column();
+          line += tok.node->get_node_position().get_end_line()
+                  - tok.node->get_node_position().get_start_line();
+          col += tok.node->get_node_position().get_end_column()
+                 - tok.node->get_node_position().get_start_column();
         }
       }
       content << "</pre>";
