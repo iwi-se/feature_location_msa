@@ -1,0 +1,8 @@
+identifier
+call_expression
+number_literal
+char_literal
+preproc_defined
+unary_expression
+binary_expression
+parenthesized_expression
