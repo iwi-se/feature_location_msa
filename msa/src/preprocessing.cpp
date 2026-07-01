@@ -77,8 +77,9 @@ void load_asts(std::vector<file_variant> &variants, const options &options)
         continue;
       }
 
-      auto ast
-          = parse_file(variant.filepath, render_language(options.m_language));
+      auto ast = parse_file(variant.filepath,
+                           render_language(options.m_language),
+                           options.atomic_node_types);
 
       variant.ast = ast;
 

@@ -23,7 +23,8 @@ std::string get_node_text(const TSNode &ts_node, const std::string &file_content
 std::shared_ptr<node_t>
     convert_ts_node_to_node(TSNode                       ts_node,
                             const std::filesystem::path &filepath,
-                            const std::string           &file_contents)
+                            const std::string           &file_contents,
+                            const std::set<std::string> &atomic_types)
 {
   const char *type     = ts_node_type(ts_node);
   bool        is_named = ts_node_is_named(ts_node);
@@ -39,11 +40,13 @@ std::shared_ptr<node_t>
   std::shared_ptr<node_t> n
       = std::make_shared<node_t>(type, text, type, is_named, node_position);
 
-  uint32_t child_count = ts_node_child_count(ts_node);
+  uint32_t child_count
+      = atomic_types.contains(type) ? 0 : ts_node_child_count(ts_node);
   for (uint32_t i = 0; i < child_count; i++)
   {
     TSNode child_ts_node = ts_node_child(ts_node, i);
-    auto   child_node = convert_ts_node_to_node(child_ts_node, filepath, file_contents);
+    auto   child_node = convert_ts_node_to_node(
+        child_ts_node, filepath, file_contents, atomic_types);
     n->add_child(child_node);
   }
 
@@ -51,7 +54,8 @@ std::shared_ptr<node_t>
 }
 
 std::shared_ptr<node_t> parse_file(const std::filesystem::path &file_path,
-                                   const std::string           &language)
+                                   const std::string           &language,
+                                   const std::set<std::string> &atomic_types)
 {
   TSParser *parser = ts_parser_new();
   if (language == "java")
@@ -82,7 +86,7 @@ std::shared_ptr<node_t> parse_file(const std::filesystem::path &file_path,
       = ts_parser_parse_string(parser, nullptr, code.c_str(), code.size());
   TSNode root_node = ts_tree_root_node(tree);
 
-  auto root = convert_ts_node_to_node(root_node, file_path, code);
+  auto root = convert_ts_node_to_node(root_node, file_path, code, atomic_types);
   root->calculate_subtree_hashes();
 
   ts_tree_delete(tree);

@@ -13,6 +13,7 @@
 #include <mutex>
 #include <oneapi/tbb/global_control.h>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <stack>
 #include <stdexcept>
@@ -86,7 +87,8 @@ bool parse_system_msa(
     std::ifstream                                  &file,
     std::pair<system_t, system_tokens_t>           &out,
     const std::string                              &lang,
-    std::map<std::string, std::shared_ptr<node_t>> &tree_cache)
+    std::map<std::string, std::shared_ptr<node_t>> &tree_cache,
+    const std::set<std::string>                    &atomic_types)
 {
   std::string system_name {};
   size_t      system_index {};
@@ -125,7 +127,7 @@ bool parse_system_msa(
   }
   else
   {
-    tree                    = parse_file(system_file, lang);
+    tree                    = parse_file(system_file, lang, atomic_types);
     tree_cache[system_file] = tree;
   }
   auto leaves { tree->get_leaves() };
@@ -178,7 +180,8 @@ std::string get_lang_from_file_path(const std::filesystem::path &msa_file)
 }
 
 std::pair<spl_file_t, std::map<system_t, system_tokens_t>>
-    parse_file_msa(const std::filesystem::path &msa_file)
+    parse_file_msa(const std::filesystem::path &msa_file,
+                   const std::set<std::string> &atomic_types)
 {
   std::ifstream file(msa_file); // open file for reading
 
@@ -196,7 +199,7 @@ std::pair<spl_file_t, std::map<system_t, system_tokens_t>>
   std::map<std::string, std::shared_ptr<node_t>> tree_cache {};
 
   std::pair<system_t, system_tokens_t> system {};
-  while (parse_system_msa(file, system, lang, tree_cache))
+  while (parse_system_msa(file, system, lang, tree_cache, atomic_types))
   {
     systems.insert(std::move(system));
   }
@@ -205,7 +208,9 @@ std::pair<spl_file_t, std::map<system_t, system_tokens_t>>
   return std::make_pair(spl_file, std::move(systems));
 }
 
-msa_representation_t parse_directory_msa(const std::filesystem::path &msa_dir)
+msa_representation_t
+    parse_directory_msa(const std::filesystem::path &msa_dir,
+                        const std::set<std::string> &atomic_types)
 {
   msa_representation_t msa {};
   for (const auto &dir_entry : std::filesystem::directory_iterator(msa_dir))
@@ -214,7 +219,7 @@ msa_representation_t parse_directory_msa(const std::filesystem::path &msa_dir)
     {
       continue;
     }
-    auto file_msa { parse_file_msa(dir_entry) };
+    auto file_msa { parse_file_msa(dir_entry, atomic_types) };
     if (msa.lang == "")
     {
       msa.lang = get_lang_from_file_path(file_msa.first);
@@ -224,16 +229,17 @@ msa_representation_t parse_directory_msa(const std::filesystem::path &msa_dir)
   return msa;
 }
 
-msa_representation_t parse_msa(const std::filesystem::path &msa_file)
+msa_representation_t parse_msa(const std::filesystem::path &msa_file,
+                               const std::set<std::string> &atomic_types)
 {
   if (std::filesystem::is_directory(msa_file))
   {
-    return parse_directory_msa(msa_file);
+    return parse_directory_msa(msa_file, atomic_types);
   }
   else
   {
     msa_representation_t msa {};
-    auto                 file_msa { parse_file_msa(msa_file) };
+    auto                 file_msa { parse_file_msa(msa_file, atomic_types) };
     msa.lang = get_lang_from_file_path(file_msa.first);
     msa.internal_rep.emplace(std::move(file_msa));
     return msa;
@@ -252,14 +258,18 @@ struct operation_t
     std::filesystem::path isolation_executable {};
     std::filesystem::path spl_specification_file {};
     size_t                threads { 0 };
+    std::set<std::string> atomic_node_types {};
 };
 
 void argument_error(char *argv[])
 {
-  std::cerr << "Usage: \n"
-            << argv[0] << " analyze <msa_outputs> <isolation_exe> <spl_spec> [--threads N]\n"
-            << argv[0] << " render <msa_outputs> <isolation_exe> <spl_spec>\n"
-            << argv[0] << " printSystemNames <msa_outputs>\n";
+  std::cerr
+      << "Usage: \n"
+      << argv[0]
+      << " analyze <msa_outputs> <isolation_exe> <spl_spec> [--threads N] [--atomic-types-file FILE]\n"
+      << argv[0]
+      << " render <msa_outputs> <isolation_exe> <spl_spec> [--atomic-types-file FILE]\n"
+      << argv[0] << " printSystemNames <msa_outputs>\n";
   exit(1);
 }
 
@@ -281,6 +291,45 @@ size_t parse_threads_flag(int argc, char *argv[], int start)
     }
   }
   return std::thread::hardware_concurrency();
+}
+
+std::set<std::string> parse_atomic_types_file(const std::filesystem::path &path)
+{
+  std::ifstream file(path);
+  if (!file.is_open())
+  {
+    std::cerr << "--atomic-types-file: could not open \"" << path.string()
+               << "\"\n";
+    exit(1);
+  }
+
+  std::set<std::string> atomic_types;
+  std::string           line;
+  while (std::getline(file, line))
+  {
+    if (!line.empty() && line.back() == '\r')
+    {
+      line.pop_back();
+    }
+    if (line.empty() || line.starts_with('#'))
+    {
+      continue;
+    }
+    atomic_types.insert(line);
+  }
+  return atomic_types;
+}
+
+std::set<std::string> parse_atomic_types_flag(int argc, char *argv[], int start)
+{
+  for (int i = start; i < argc - 1; ++i)
+  {
+    if (std::string(argv[i]) == "--atomic-types-file")
+    {
+      return parse_atomic_types_file(argv[i + 1]);
+    }
+  }
+  return {};
 }
 
 operation_t cli_arguments(int argc, char *argv[])
@@ -307,10 +356,15 @@ operation_t cli_arguments(int argc, char *argv[])
     std::string           msa_path { argv[2] };
     std::filesystem::path isolation_executable { argv[3] };
     std::filesystem::path spl_specification_file { argv[4] };
+    std::set<std::string> atomic_node_types {
+      parse_atomic_types_flag(argc, argv, 5)
+    };
     return operation_t { operation_t::operation_type_t::render,
                          msa_path,
                          isolation_executable,
-                         spl_specification_file };
+                         spl_specification_file,
+                         0,
+                         atomic_node_types };
   }
   else if (operation_type == "analyze")
   {
@@ -322,11 +376,15 @@ operation_t cli_arguments(int argc, char *argv[])
     std::filesystem::path isolation_executable { argv[3] };
     std::filesystem::path spl_specification_file { argv[4] };
     size_t                threads { parse_threads_flag(argc, argv, 5) };
+    std::set<std::string> atomic_node_types {
+      parse_atomic_types_flag(argc, argv, 5)
+    };
     return operation_t { operation_t::operation_type_t::analyze,
                          msa_path,
                          isolation_executable,
                          spl_specification_file,
-                         threads };
+                         threads,
+                         atomic_node_types };
   }
   argument_error(argv);
   return operation_t {};
@@ -702,7 +760,8 @@ void analyze(operation_t op)
   auto process_one_file = [op, &accumulator, &accumulator_mutex](
                               const std::filesystem::path &msa_file_path)
   {
-    auto [spl_file, systems] = parse_file_msa(msa_file_path);
+    auto [spl_file, systems]
+        = parse_file_msa(msa_file_path, op.atomic_node_types);
 
     if (systems.empty())
     {
@@ -801,7 +860,7 @@ void analyze(operation_t op)
 
 void render(operation_t op)
 {
-  auto                  msa { parse_msa(op.msa_path) };
+  auto                  msa { parse_msa(op.msa_path, op.atomic_node_types) };
   std::set<std::string> features;
 
   for (const auto &file : msa.internal_rep)
