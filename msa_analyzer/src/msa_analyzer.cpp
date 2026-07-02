@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <execution>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -13,6 +12,8 @@
 #include <mutex>
 #include <oneapi/tbb/global_control.h>
 #include <regex>
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
 #include <set>
 #include <sstream>
 #include <stack>
@@ -834,16 +835,18 @@ void analyze(operation_t op)
               });
     const size_t        total { files.size() };
     std::atomic<size_t> progress { 0 };
-    std::for_each(std::execution::par,
-                  files.begin(),
-                  files.end(),
-                  [&](const std::filesystem::path &path)
-                  {
-                    size_t n { ++progress };
-                    std::cout << "Processing file " << n << "/" << total
-                              << "\n";
-                    process_one_file(path);
-                  });
+    tbb::parallel_for(
+        tbb::blocked_range<size_t>(0, files.size(), 1),
+        [&](const tbb::blocked_range<size_t> &range)
+        {
+          for (size_t i = range.begin(); i != range.end(); ++i)
+          {
+            size_t n { ++progress };
+            std::cout << "Processing file " << n << "/" << total << "\n";
+            process_one_file(files[i]);
+          }
+        },
+        tbb::simple_partitioner());
   }
   else
   {
