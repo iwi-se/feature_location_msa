@@ -1,16 +1,10 @@
-local_variable_declaration
 throw_statement
 import_declaration
-assignment_expression
 instanceof_expression
-ternary_expression
-update_expression
-unary_expression
 method_invocation
 field_access
 array_access
 class_literal
-array_creation_expression
 modifiers
 formal_parameter
 catch_formal_parameter
