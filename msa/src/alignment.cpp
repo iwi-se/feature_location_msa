@@ -3,10 +3,12 @@
 #include "helper.hpp"
 #include "preprocessing.hpp"
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <unordered_set>
 #include <utility>
 
@@ -70,9 +72,21 @@ size_t scoreLcsCount(const std::set<size_t>& lcs, const hash_count& hash_count)
   return score;
 }
 
-size_t calculateCommonAncestorProximity(std::shared_ptr<node_t> node1,
-                                        std::shared_ptr<node_t> node2)
+constexpr size_t kAncestorProximitySalt { 0x9E37'79B9'7F4A'7C15ULL };
+
+size_t
+    calculateCommonAncestorProximity(std::shared_ptr<node_t>             node1,
+                                     std::shared_ptr<node_t>             node2,
+                                     std::unordered_map<size_t, double>& cache)
 {
+  size_t key { (node1->get_subtree_hash()
+                ^ (node2->get_subtree_hash() * kAncestorProximitySalt))
+               ^ kAncestorProximitySalt };
+  if (auto it = cache.find(key); it != cache.end())
+  {
+    return static_cast<size_t>(it->second);
+  }
+
   size_t distance { 0 };
   while (node1 != nullptr)
   {
@@ -85,7 +99,9 @@ size_t calculateCommonAncestorProximity(std::shared_ptr<node_t> node1,
       if (node1 != nullptr && tempNode2 != nullptr
           && node1->get_tag() == tempNode2->get_tag())
       {
-        return innerDistance + distance;
+        size_t result { innerDistance + distance };
+        cache.insert({ key, static_cast<double>(result) });
+        return result;
       }
       innerDistance++;
     }
@@ -170,7 +186,8 @@ double ancestorSimilarity(std::shared_ptr<node_t>             n1,
   if (n1->get_parent()->get_tag() != n2->get_parent()->get_tag())
   {
     result += std::pow(
-        static_cast<double>(calculateCommonAncestorProximity(n1, n2)) + 1.0,
+        static_cast<double>(calculateCommonAncestorProximity(n1, n2, cache))
+            + 1.0,
         -2);
   }
   else
@@ -205,11 +222,34 @@ double score(const alignment_token&              a,
   {
     return -100.0;
   }
-  if (a.node->get_subtree_hash() == b.node->get_subtree_hash())
+
+  // Evaluate every representative of `a` against every representative of
+  // `b` (primary `node` plus any `alternates` from a merged profile column)
+  // and average the matching pairs' scores. In the common non-profile case
+  // both `alternates` are empty, so this reduces to exactly one comparison.
+  auto a_reps = std::vector<std::shared_ptr<node_t>> { a.node };
+  a_reps.insert(a_reps.end(), a.alternates.begin(), a.alternates.end());
+  auto b_reps = std::vector<std::shared_ptr<node_t>> { b.node };
+  b_reps.insert(b_reps.end(), b.alternates.begin(), b.alternates.end());
+
+  double sum { 0.0 };
+  size_t matches { 0 };
+  for (const auto& a_rep : a_reps)
   {
-    return ancestorSimilarity(a.node, b.node, hashCount, cache);
-  };
-  return -100.0;
+    for (const auto& b_rep : b_reps)
+    {
+      if (a_rep->get_subtree_hash() == b_rep->get_subtree_hash())
+      {
+        sum += ancestorSimilarity(a_rep, b_rep, hashCount, cache);
+        ++matches;
+      }
+    }
+  }
+  if (matches == 0)
+  {
+    return -100.0;
+  }
+  return sum / static_cast<double>(matches);
 }
 
 std::pair<size_t, size_t> calculate_l_range(size_t k, size_t len1, size_t len2)
@@ -309,6 +349,51 @@ void align_pairwise(std::vector<alignment_token>&       seq1,
   }
 }
 
+struct ancestor_fingerprint
+{
+    std::string           parent_tag;
+    std::array<size_t, 4> ancestor_hashes {};
+    size_t                depth_reached {};
+
+    bool operator== (const ancestor_fingerprint&) const = default;
+};
+
+// Captures exactly what ancestorSimilarity() consults about a node's
+// ancestor chain (the branch-selecting parent tag, plus the ancestor
+// subtree hashes fed into the memoized subtreeSimilarity() climb up to
+// 4 levels). Two nodes with equal fingerprints are guaranteed to produce
+// identical ancestorSimilarity() scores against any given candidate, as
+// long as both end up on the "parent tags match" branch (checked by the
+// caller via parent_tag equality before trusting a fingerprint match).
+std::optional<ancestor_fingerprint>
+    compute_ancestor_fingerprint(const std::shared_ptr<node_t>& n)
+{
+  if (n == nullptr || n->get_parent() == nullptr)
+  {
+    return std::nullopt;
+  }
+
+  ancestor_fingerprint fp {};
+  fp.parent_tag = n->get_parent()->get_tag();
+
+  auto n1 { n };
+  for (size_t level {}; level < 4; ++level)
+  {
+    n1 = n1->get_parent();
+    if (n1 == nullptr)
+    {
+      break;
+    }
+    fp.ancestor_hashes[level] = n1->get_subtree_hash();
+    fp.depth_reached          = level + 1;
+    if (n1->get_parent() == nullptr)
+    {
+      break;
+    }
+  }
+  return fp;
+}
+
 std::vector<alignment_token> merge_aligned_sequences(
     const std::vector<std::vector<alignment_token>*>& sequences)
 {
@@ -335,14 +420,47 @@ std::vector<alignment_token> merge_aligned_sequences(
   // Iterate column by column
   for (size_t pos = 0; pos < length; ++pos)
   {
+    std::vector<std::shared_ptr<node_t>>             reps;
+    std::vector<std::optional<ancestor_fingerprint>> rep_fingerprints;
+
     for (size_t seq_idx = 0; seq_idx < num_sequences; ++seq_idx)
     {
       const auto& token { (*sequences[seq_idx])[pos] };
-      if (!token.is_filler())
+      if (token.is_filler())
       {
-        merged.push_back(token);
-        break; // move to next column
+        continue;
       }
+
+      auto fp { compute_ancestor_fingerprint(token.node) };
+      bool merged_into_existing { false };
+      if (fp.has_value())
+      {
+        for (size_t r {}; r < reps.size(); ++r)
+        {
+          if (rep_fingerprints[r].has_value() && *rep_fingerprints[r] == *fp)
+          {
+            merged_into_existing = true;
+            break;
+          }
+        }
+      }
+
+      if (!merged_into_existing)
+      {
+        reps.push_back(token.node);
+        rep_fingerprints.push_back(fp);
+      }
+    }
+
+    if (!reps.empty())
+    {
+      alignment_token merged_tok { alignment_token::token_kind::node,
+                                   reps.front() };
+      if (reps.size() > 1)
+      {
+        merged_tok.alternates.assign(reps.begin() + 1, reps.end());
+      }
+      merged.push_back(std::move(merged_tok));
     }
   }
 
@@ -438,8 +556,8 @@ token_table extract_non_filler_tokens(const token_table& sequence)
   return result;
 }
 
-std::vector<bool> find_non_empty_columns(
-    const std::vector<token_table*>& sequences)
+std::vector<bool>
+    find_non_empty_columns(const std::vector<token_table*>& sequences)
 {
   if (sequences.empty())
   {
@@ -500,8 +618,7 @@ void refine_alignment(std::vector<file_variant>&          variants,
         reduced_profile.push_back(merged[pos]);
         for (size_t seq_idx {}; seq_idx < other_sequences.size(); ++seq_idx)
         {
-          compacted_others[seq_idx].push_back(
-              (*other_sequences[seq_idx])[pos]);
+          compacted_others[seq_idx].push_back((*other_sequences[seq_idx])[pos]);
         }
       }
     }

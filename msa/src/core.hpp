@@ -16,6 +16,7 @@ struct alignment_token
     } token_kind;
     std::shared_ptr<node_t> node {};
     int                     filler_size {};
+    std::vector<std::shared_ptr<node_t>> alternates {};
 
     inline bool is_filler() const
     {
