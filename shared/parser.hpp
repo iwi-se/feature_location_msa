@@ -7,3 +7,8 @@
 std::shared_ptr<node_t> parse_file(const std::filesystem::path &file_path,
                                    const std::string           &language,
                                    const std::set<std::string> &atomic_types = {});
+
+std::shared_ptr<node_t> parse_source(const std::string           &source,
+                                     const std::string           &language,
+                                     const std::filesystem::path &synthetic_path,
+                                     const std::set<std::string> &atomic_types = {});

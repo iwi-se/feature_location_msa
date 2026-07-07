@@ -53,9 +53,10 @@ std::shared_ptr<node_t>
   return n;
 }
 
-std::shared_ptr<node_t> parse_file(const std::filesystem::path &file_path,
-                                   const std::string           &language,
-                                   const std::set<std::string> &atomic_types)
+std::shared_ptr<node_t> parse_source(const std::string           &source,
+                                     const std::string           &language,
+                                     const std::filesystem::path &synthetic_path,
+                                     const std::set<std::string> &atomic_types)
 {
   TSParser *parser = ts_parser_new();
   if (language == "java")
@@ -74,25 +75,31 @@ std::shared_ptr<node_t> parse_file(const std::filesystem::path &file_path,
   }
   else
   {
+    ts_parser_delete(parser);
     throw std::runtime_error("Unsupported language: " + language);
-    return nullptr;
   }
 
-  std::ifstream file(file_path);
-  std::string   code((std::istreambuf_iterator<char>(file)),
-                   std::istreambuf_iterator<char>());
-
-  TSTree *tree
-      = ts_parser_parse_string(parser, nullptr, code.c_str(), code.size());
+  TSTree *tree = ts_parser_parse_string(
+      parser, nullptr, source.c_str(), source.size());
   TSNode root_node = ts_tree_root_node(tree);
 
-  auto root = convert_ts_node_to_node(root_node, file_path, code, atomic_types);
+  auto root
+      = convert_ts_node_to_node(root_node, synthetic_path, source, atomic_types);
   root->calculate_subtree_hashes();
 
   ts_tree_delete(tree);
   ts_parser_delete(parser);
-  ts_language_delete(tree_sitter_cpp());
-  ts_language_delete(tree_sitter_java());
 
   return root;
+}
+
+std::shared_ptr<node_t> parse_file(const std::filesystem::path &file_path,
+                                   const std::string           &language,
+                                   const std::set<std::string> &atomic_types)
+{
+  std::ifstream file(file_path);
+  std::string   code((std::istreambuf_iterator<char>(file)),
+                   std::istreambuf_iterator<char>());
+
+  return parse_source(code, language, file_path, atomic_types);
 }
