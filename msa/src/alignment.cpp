@@ -420,6 +420,113 @@ void align_file_variants(std::vector<file_variant>& variants,
     aligned_sequences.push_back(
         &(*variants[next_most_similar_index].m_token_table));
   }
+
+  refine_alignment(variants, hash_count, cache);
+}
+
+token_table extract_non_filler_tokens(const token_table& sequence)
+{
+  token_table result {};
+  result.reserve(sequence.size());
+  for (const auto& token : sequence)
+  {
+    if (!token.is_filler())
+    {
+      result.push_back(token);
+    }
+  }
+  return result;
+}
+
+std::vector<bool> find_non_empty_columns(
+    const std::vector<token_table*>& sequences)
+{
+  if (sequences.empty())
+  {
+    return {};
+  }
+
+  size_t            length = sequences[0]->size();
+  std::vector<bool> keep(length, false);
+
+  for (size_t pos = 0; pos < length; ++pos)
+  {
+    for (const auto* sequence : sequences)
+    {
+      if (!(*sequence)[pos].is_filler())
+      {
+        keep[pos] = true;
+        break;
+      }
+    }
+  }
+
+  return keep;
+}
+
+void refine_alignment(std::vector<file_variant>&          variants,
+                      const hash_count&                   hash_count,
+                      std::unordered_map<size_t, double>& cache)
+{
+  for (size_t i {}; i < variants.size(); ++i)
+  {
+    std::vector<token_table*> other_sequences {};
+    other_sequences.reserve(variants.size() - 1);
+    for (size_t j {}; j < variants.size(); ++j)
+    {
+      if (j != i)
+      {
+        other_sequences.push_back(&(*variants[j].m_token_table));
+      }
+    }
+
+    auto merged { merge_aligned_sequences(other_sequences) };
+    auto keep_column { find_non_empty_columns(other_sequences) };
+
+    // Compact the merged profile and every other variant to only the
+    // columns where at least one of the remaining variants has a token.
+    token_table reduced_profile {};
+    reduced_profile.reserve(merged.size());
+    std::vector<token_table> compacted_others(other_sequences.size());
+    for (auto& seq : compacted_others)
+    {
+      seq.reserve(merged.size());
+    }
+
+    for (size_t pos {}; pos < keep_column.size(); ++pos)
+    {
+      if (keep_column[pos])
+      {
+        reduced_profile.push_back(merged[pos]);
+        for (size_t seq_idx {}; seq_idx < other_sequences.size(); ++seq_idx)
+        {
+          compacted_others[seq_idx].push_back(
+              (*other_sequences[seq_idx])[pos]);
+        }
+      }
+    }
+
+    auto original_tokens { extract_non_filler_tokens(
+        *variants[i].m_token_table) };
+
+    align_pairwise(reduced_profile, original_tokens, hash_count, cache);
+
+    std::vector<std::vector<alignment_token>*> compacted_pointers {};
+    compacted_pointers.reserve(compacted_others.size());
+    for (auto& seq : compacted_others)
+    {
+      compacted_pointers.push_back(&seq);
+    }
+
+    realign_aligned_sequence(compacted_pointers, reduced_profile);
+
+    for (size_t seq_idx {}; seq_idx < other_sequences.size(); ++seq_idx)
+    {
+      *other_sequences[seq_idx] = std::move(compacted_others[seq_idx]);
+    }
+
+    *variants[i].m_token_table = std::move(original_tokens);
+  }
 }
 
 std::vector<std::vector<alignment_token>*>
