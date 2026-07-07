@@ -215,8 +215,26 @@ double ancestorSimilarity(std::shared_ptr<node_t>             n1,
 
 // Experimentation flag: how to combine scores across multiple representative
 // pairs in a column (see alignment_token::alternates).
-enum class column_score_mode { best, average, worst };
+enum class column_score_mode
+{
+  best,
+  average,
+  worst
+};
 constexpr column_score_mode kColumnScoreMode { column_score_mode::worst };
+
+// Experimentation flag: when to stop the iterative refinement loop in
+// align_file_variants. score_based = stop once a pass no longer improves
+// compute_alignment_score (reverting that non-improving pass); no_change =
+// stop once a pass leaves every variant's token table unchanged.
+enum class refinement_stop_mode
+{
+  score_based,
+  no_change
+};
+constexpr refinement_stop_mode kRefinementStopMode {
+  refinement_stop_mode::no_change
+};
 
 double score(const alignment_token&              a,
              const alignment_token&              b,
@@ -248,10 +266,10 @@ double score(const alignment_token&              a,
     {
       if (a_rep->get_subtree_hash() == b_rep->get_subtree_hash())
       {
-        double s = ancestorSimilarity(a_rep, b_rep, hashCount, cache);
-        best     = std::max(best, s);
-        worst    = std::min(worst, s);
-        sum += s;
+        double s  = ancestorSimilarity(a_rep, b_rep, hashCount, cache);
+        best      = std::max(best, s);
+        worst     = std::min(worst, s);
+        sum      += s;
         ++matches;
       }
     }
@@ -262,9 +280,12 @@ double score(const alignment_token&              a,
   }
   switch (kColumnScoreMode)
   {
-    case column_score_mode::best:    return best;
-    case column_score_mode::worst:   return worst;
-    case column_score_mode::average: return sum / static_cast<double>(matches);
+    case column_score_mode::best :
+      return best;
+    case column_score_mode::worst :
+      return worst;
+    case column_score_mode::average :
+      return sum / static_cast<double>(matches);
   }
   return sum / static_cast<double>(matches);
 }
@@ -536,8 +557,8 @@ double compute_alignment_score(std::vector<file_variant>&          variants,
   return total;
 }
 
-std::vector<token_table> snapshot_token_tables(
-    const std::vector<file_variant>& variants)
+std::vector<token_table>
+    snapshot_token_tables(const std::vector<file_variant>& variants)
 {
   std::vector<token_table> snapshot;
   snapshot.reserve(variants.size());
@@ -605,21 +626,43 @@ void align_file_variants(std::vector<file_variant>& variants,
   }
 
   constexpr size_t kMaxRefinementIterations { 50 };
-  double current_score { compute_alignment_score(variants, hash_count,
-                                                 cache) };
+  double           current_score {};
+  if constexpr (kRefinementStopMode == refinement_stop_mode::score_based)
+  {
+    current_score = compute_alignment_score(variants, hash_count, cache);
+  }
   for (size_t iteration {}; iteration < kMaxRefinementIterations; ++iteration)
   {
     auto snapshot { snapshot_token_tables(variants) };
 
     refine_alignment(variants, hash_count, cache);
 
-    double new_score { compute_alignment_score(variants, hash_count, cache) };
-    if (new_score <= current_score)
+    if constexpr (kRefinementStopMode == refinement_stop_mode::no_change)
     {
-      restore_token_tables(variants, snapshot);
-      break;
+      bool changed { false };
+      for (size_t i {}; i < variants.size(); ++i)
+      {
+        if (*variants[i].m_token_table != snapshot[i])
+        {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed)
+      {
+        break;
+      }
     }
-    current_score = new_score;
+    else
+    {
+      double new_score { compute_alignment_score(variants, hash_count, cache) };
+      if (new_score <= current_score)
+      {
+        restore_token_tables(variants, snapshot);
+        break;
+      }
+      current_score = new_score;
+    }
   }
 }
 
