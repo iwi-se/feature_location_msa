@@ -12,13 +12,13 @@
 #include <mutex>
 #include <oneapi/tbb/global_control.h>
 #include <regex>
-#include <tbb/blocked_range.h>
-#include <tbb/parallel_for.h>
 #include <set>
 #include <sstream>
 #include <stack>
 #include <stdexcept>
 #include <string>
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -264,13 +264,14 @@ struct operation_t
 
 void argument_error(char *argv[])
 {
-  std::cerr
-      << "Usage: \n"
-      << argv[0]
-      << " analyze <msa_outputs> <isolation_exe> <spl_spec> [--threads N] [--atomic-types-file FILE]\n"
-      << argv[0]
-      << " render <msa_outputs> <isolation_exe> <spl_spec> [--atomic-types-file FILE]\n"
-      << argv[0] << " printSystemNames <msa_outputs>\n";
+  std::cerr << "Usage: \n"
+            << argv[0]
+            << " analyze <msa_outputs> <isolation_exe> <spl_spec> [--threads "
+               "N] [--atomic-types-file FILE]\n"
+            << argv[0]
+            << " render <msa_outputs> <isolation_exe> <spl_spec> "
+               "[--atomic-types-file FILE]\n"
+            << argv[0] << " printSystemNames <msa_outputs>\n";
   exit(1);
 }
 
@@ -300,7 +301,7 @@ std::set<std::string> parse_atomic_types_file(const std::filesystem::path &path)
   if (!file.is_open())
   {
     std::cerr << "--atomic-types-file: could not open \"" << path.string()
-               << "\"\n";
+              << "\"\n";
     exit(1);
   }
 
@@ -357,9 +358,8 @@ operation_t cli_arguments(int argc, char *argv[])
     std::string           msa_path { argv[2] };
     std::filesystem::path isolation_executable { argv[3] };
     std::filesystem::path spl_specification_file { argv[4] };
-    std::set<std::string> atomic_node_types {
-      parse_atomic_types_flag(argc, argv, 5)
-    };
+    std::set<std::string> atomic_node_types { parse_atomic_types_flag(
+        argc, argv, 5) };
     return operation_t { operation_t::operation_type_t::render,
                          msa_path,
                          isolation_executable,
@@ -377,9 +377,8 @@ operation_t cli_arguments(int argc, char *argv[])
     std::filesystem::path isolation_executable { argv[3] };
     std::filesystem::path spl_specification_file { argv[4] };
     size_t                threads { parse_threads_flag(argc, argv, 5) };
-    std::set<std::string> atomic_node_types {
-      parse_atomic_types_flag(argc, argv, 5)
-    };
+    std::set<std::string> atomic_node_types { parse_atomic_types_flag(
+        argc, argv, 5) };
     return operation_t { operation_t::operation_type_t::analyze,
                          msa_path,
                          isolation_executable,
@@ -614,13 +613,17 @@ std::string transform_and_feature(const std::string &feat)
   }
   parts.push_back(feat.substr(start));
   for (auto &p : parts)
+  {
     replace_all(p, "\xc2\xac", "not_");
+  }
   std::sort(parts.begin(), parts.end());
   std::string result {};
   for (size_t i {}; i < parts.size(); ++i)
   {
     if (i > 0)
+    {
       result += "_and_";
+    }
     result += parts[i];
   }
   return result;
@@ -651,7 +654,8 @@ void print_nodes(const std::vector<std::shared_ptr<node_t>> &nodes)
 }
 
 void print_results_per_file(
-    const std::map<std::string, std::vector<std::shared_ptr<node_t>>> &results_per_file)
+    const std::map<std::string, std::vector<std::shared_ptr<node_t>>>
+        &results_per_file)
 {
   for (const auto &file_result : results_per_file)
   {
@@ -784,9 +788,8 @@ void analyze(operation_t op)
       {
         continue;
       }
-      const std::string feat {
-        transform_and_feature(get_feature_from_systems(present, op))
-      };
+      const std::string feat { transform_and_feature(
+          get_feature_from_systems(present, op)) };
       for (auto &[sys_id, sys_tok] : systems)
       {
         if (sys_tok.tokens[col].is_node())
@@ -798,7 +801,8 @@ void analyze(operation_t op)
 
     for (auto &[sys_id, sys_tok] : systems)
     {
-      std::map<std::string, std::vector<std::shared_ptr<node_t>>> nodes_by_feature {};
+      std::map<std::string, std::vector<std::shared_ptr<node_t>>>
+          nodes_by_feature {};
       for (auto &tok : sys_tok.tokens)
       {
         if (tok.is_node())
@@ -828,10 +832,12 @@ void analyze(operation_t op)
         files.push_back(entry.path());
       }
     }
-    std::sort(files.begin(), files.end(),
+    std::sort(files.begin(),
+              files.end(),
               [](const std::filesystem::path &a, const std::filesystem::path &b)
               {
-                return std::filesystem::file_size(a) > std::filesystem::file_size(b);
+                return std::filesystem::file_size(a)
+                       > std::filesystem::file_size(b);
               });
     const size_t        total { files.size() };
     std::atomic<size_t> progress { 0 };
@@ -880,9 +886,8 @@ void render(operation_t op)
           systems.push_back(system_id_and_tokens.first);
         }
       }
-      const std::string feature {
-        transform_and_feature(get_feature_from_systems(systems, op))
-      };
+      const std::string feature { transform_and_feature(
+          get_feature_from_systems(systems, op)) };
       features.insert(feature);
       for (const auto &system_id_and_tokens : file.second)
       {
@@ -972,7 +977,7 @@ void render(operation_t op)
 
 int main(int argc, char *argv[])
 {
-  operation_t operation { cli_arguments(argc, argv) };
+  operation_t         operation { cli_arguments(argc, argv) };
   tbb::global_control gc(tbb::global_control::max_allowed_parallelism,
                          operation.threads > 0
                              ? operation.threads
