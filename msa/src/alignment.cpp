@@ -8,6 +8,7 @@
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <unordered_set>
 #include <utility>
@@ -212,6 +213,11 @@ double ancestorSimilarity(std::shared_ptr<node_t>             n1,
   return result;
 }
 
+// Experimentation flag: how to combine scores across multiple representative
+// pairs in a column (see alignment_token::alternates).
+enum class column_score_mode { best, average, worst };
+constexpr column_score_mode kColumnScoreMode { column_score_mode::worst };
+
 double score(const alignment_token&              a,
              const alignment_token&              b,
              const hash_count&                   hashCount,
@@ -224,14 +230,16 @@ double score(const alignment_token&              a,
   }
 
   // Evaluate every representative of `a` against every representative of
-  // `b` (primary `node` plus any `alternates` from a merged profile column)
-  // and average the matching pairs' scores. In the common non-profile case
-  // both `alternates` are empty, so this reduces to exactly one comparison.
+  // `b` (primary `node` plus any `alternates` from a merged profile column).
+  // In the common non-profile case both `alternates` are empty, so this
+  // reduces to exactly one comparison either way.
   auto a_reps = std::vector<std::shared_ptr<node_t>> { a.node };
   a_reps.insert(a_reps.end(), a.alternates.begin(), a.alternates.end());
   auto b_reps = std::vector<std::shared_ptr<node_t>> { b.node };
   b_reps.insert(b_reps.end(), b.alternates.begin(), b.alternates.end());
 
+  double worst { std::numeric_limits<double>::max() };
+  double best { -100.0 };
   double sum { 0.0 };
   size_t matches { 0 };
   for (const auto& a_rep : a_reps)
@@ -240,7 +248,10 @@ double score(const alignment_token&              a,
     {
       if (a_rep->get_subtree_hash() == b_rep->get_subtree_hash())
       {
-        sum += ancestorSimilarity(a_rep, b_rep, hashCount, cache);
+        double s = ancestorSimilarity(a_rep, b_rep, hashCount, cache);
+        best     = std::max(best, s);
+        worst    = std::min(worst, s);
+        sum += s;
         ++matches;
       }
     }
@@ -248,6 +259,12 @@ double score(const alignment_token&              a,
   if (matches == 0)
   {
     return -100.0;
+  }
+  switch (kColumnScoreMode)
+  {
+    case column_score_mode::best:    return best;
+    case column_score_mode::worst:   return worst;
+    case column_score_mode::average: return sum / static_cast<double>(matches);
   }
   return sum / static_cast<double>(matches);
 }
@@ -492,6 +509,54 @@ void realign_aligned_sequence(
   }
 }
 
+// Total alignment quality across all variants: builds the consensus profile
+// and sums score() of every variant's token against the profile at that
+// column. Used as the convergence measure for iterative refinement.
+double compute_alignment_score(std::vector<file_variant>&          variants,
+                               const hash_count&                   hash_count,
+                               std::unordered_map<size_t, double>& cache)
+{
+  std::vector<std::vector<alignment_token>*> all_sequences;
+  all_sequences.reserve(variants.size());
+  for (auto& variant : variants)
+  {
+    all_sequences.push_back(&(*variant.m_token_table));
+  }
+
+  auto profile { merge_aligned_sequences(all_sequences) };
+
+  double total {};
+  for (auto* sequence : all_sequences)
+  {
+    for (size_t pos {}; pos < profile.size(); ++pos)
+    {
+      total += score(profile[pos], (*sequence)[pos], hash_count, cache);
+    }
+  }
+  return total;
+}
+
+std::vector<token_table> snapshot_token_tables(
+    const std::vector<file_variant>& variants)
+{
+  std::vector<token_table> snapshot;
+  snapshot.reserve(variants.size());
+  for (const auto& variant : variants)
+  {
+    snapshot.push_back(*variant.m_token_table);
+  }
+  return snapshot;
+}
+
+void restore_token_tables(std::vector<file_variant>& variants,
+                          std::vector<token_table>&  snapshot)
+{
+  for (size_t i {}; i < variants.size(); ++i)
+  {
+    *variants[i].m_token_table = std::move(snapshot[i]);
+  }
+}
+
 void align_file_variants(std::vector<file_variant>& variants,
                          const options&             options)
 {
@@ -539,7 +604,23 @@ void align_file_variants(std::vector<file_variant>& variants,
         &(*variants[next_most_similar_index].m_token_table));
   }
 
-  refine_alignment(variants, hash_count, cache);
+  constexpr size_t kMaxRefinementIterations { 50 };
+  double current_score { compute_alignment_score(variants, hash_count,
+                                                 cache) };
+  for (size_t iteration {}; iteration < kMaxRefinementIterations; ++iteration)
+  {
+    auto snapshot { snapshot_token_tables(variants) };
+
+    refine_alignment(variants, hash_count, cache);
+
+    double new_score { compute_alignment_score(variants, hash_count, cache) };
+    if (new_score <= current_score)
+    {
+      restore_token_tables(variants, snapshot);
+      break;
+    }
+    current_score = new_score;
+  }
 }
 
 token_table extract_non_filler_tokens(const token_table& sequence)
