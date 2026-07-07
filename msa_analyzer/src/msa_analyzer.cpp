@@ -644,6 +644,37 @@ std::vector<std::string> expand_or_feature(const std::string &feat)
   return parts;
 }
 
+std::string strip_parens(const std::string &clause)
+{
+  std::string s { clause };
+  s.erase(0, s.find_first_not_of(" \t"));
+  s.erase(s.find_last_not_of(" \t") + 1);
+  if (s.size() >= 2 && s.front() == '(' && s.back() == ')')
+  {
+    s = s.substr(1, s.size() - 2);
+  }
+  return s;
+}
+
+std::string transform_dnf_feature(const std::string &raw)
+{
+  std::vector<std::string> clauses { expand_or_feature(raw) };
+  for (auto &clause : clauses)
+  {
+    clause = transform_and_feature(strip_parens(clause));
+  }
+  std::string result {};
+  for (size_t i {}; i < clauses.size(); ++i)
+  {
+    if (i > 0)
+    {
+      result += " \xe2\x88\xa8 ";
+    }
+    result += clauses[i];
+  }
+  return result;
+}
+
 void print_nodes(const std::vector<std::shared_ptr<node_t>> &nodes)
 {
   for (const auto &node : nodes)
@@ -788,7 +819,7 @@ void analyze(operation_t op)
       {
         continue;
       }
-      const std::string feat { transform_and_feature(
+      const std::string feat { transform_dnf_feature(
           get_feature_from_systems(present, op)) };
       for (auto &[sys_id, sys_tok] : systems)
       {
@@ -886,7 +917,7 @@ void render(operation_t op)
           systems.push_back(system_id_and_tokens.first);
         }
       }
-      const std::string feature { transform_and_feature(
+      const std::string feature { transform_dnf_feature(
           get_feature_from_systems(systems, op)) };
       features.insert(feature);
       for (const auto &system_id_and_tokens : file.second)
