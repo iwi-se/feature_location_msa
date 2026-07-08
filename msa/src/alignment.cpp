@@ -631,39 +631,40 @@ void align_file_variants(std::vector<file_variant>& variants,
   {
     current_score = compute_alignment_score(variants, hash_count, cache);
   }
-  for (size_t iteration {}; iteration < kMaxRefinementIterations; ++iteration)
-  {
-    auto snapshot { snapshot_token_tables(variants) };
-
-    refine_alignment(variants, hash_count, cache);
-
-    if constexpr (kRefinementStopMode == refinement_stop_mode::no_change)
-    {
-      bool changed { false };
-      for (size_t i {}; i < variants.size(); ++i)
-      {
-        if (*variants[i].m_token_table != snapshot[i])
-        {
-          changed = true;
-          break;
-        }
-      }
-      if (!changed)
-      {
-        break;
-      }
-    }
-    else
-    {
-      double new_score { compute_alignment_score(variants, hash_count, cache) };
-      if (new_score <= current_score)
-      {
-        restore_token_tables(variants, snapshot);
-        break;
-      }
-      current_score = new_score;
-    }
-  }
+  // for (size_t iteration {}; iteration < kMaxRefinementIterations;
+  // ++iteration)
+  // {
+  //   auto snapshot { snapshot_token_tables(variants) };
+  //
+  //   refine_alignment(variants, hash_count, cache);
+  //
+  //   if constexpr (kRefinementStopMode == refinement_stop_mode::no_change)
+  //   {
+  //     bool changed { false };
+  //     for (size_t i {}; i < variants.size(); ++i)
+  //     {
+  //       if (*variants[i].m_token_table != snapshot[i])
+  //       {
+  //         changed = true;
+  //         break;
+  //       }
+  //     }
+  //     if (!changed)
+  //     {
+  //       break;
+  //     }
+  //   }
+  //   else
+  //   {
+  //     double new_score { compute_alignment_score(variants, hash_count, cache)
+  //     }; if (new_score <= current_score)
+  //     {
+  //       restore_token_tables(variants, snapshot);
+  //       break;
+  //     }
+  //     current_score = new_score;
+  //   }
+  // }
 }
 
 token_table extract_non_filler_tokens(const token_table& sequence)
