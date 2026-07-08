@@ -1,5 +1,6 @@
 #include "alignment.hpp"
 #include "arguments.hpp"
+#include "combination_refinement.hpp"
 #include "core.hpp"
 #include "file_discovery.hpp"
 #include "guide_tree.hpp"
@@ -53,6 +54,8 @@ int main(int argc, char* argv[])
 
           align_file_variants(file_family.variants, options);
           // align_guide_tree(file_family, options);
+
+          refine_rare_combinations(file_family.variants);
 
           apply_filler_size(file_family.variants);
 
