@@ -408,10 +408,13 @@ namespace
       {
         size_t i { forward ? idx : n - 1 - idx };
 
+        std::ostringstream progress_detail;
+        progress_detail << (forward ? "forward" : "backward") << ", pass "
+                        << (pass + 1) << "/" << kMaxRefinementPass;
         report_progress(pipeline_stage::refine_rare_combinations,
                         idx + 1,
                         n,
-                        forward ? "forward" : "backward");
+                        progress_detail.str());
 
         auto anchor_state { read_column(variants, i) };
         if (!is_rare(key_from_state(anchor_state)))
