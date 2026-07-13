@@ -80,8 +80,11 @@ class DashboardState:
             return
 
         if kind == "family_progress":
+            detail = e.get("detail")
+            detail_part = f" {detail}" if detail else ""
             stage_label = (
-                f"{e.get('stage')} ({e.get('current_step')}/{e.get('total_steps')})"
+                f"{e.get('stage')}{detail_part} "
+                f"({e.get('current_step')}/{e.get('total_steps')})"
             )
             if slot in self.threads and self.threads[slot].get("family") == family:
                 self.threads[slot]["stage"] = stage_label
