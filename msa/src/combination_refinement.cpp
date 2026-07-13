@@ -1,5 +1,6 @@
 #include "combination_refinement.hpp"
 #include "event_sink.hpp"
+#include <algorithm>
 #include <functional>
 #include <optional>
 #include <sstream>
@@ -10,6 +11,13 @@ namespace
 {
   constexpr size_t kRarityThreshold   = 10;
   constexpr size_t kMaxRefinementPass = 10;
+  // Cap on Hamming distance (# of mismatched rows) between a rare anchor
+  // column's presence pattern and a "wanted" (non-rare) target combination
+  // we're willing to try to move it toward. Keeps the per-column search
+  // bounded to combinations plausibly reachable with the ~1-2 candidate
+  // moves available per row, instead of every distinct combination in the
+  // file.
+  constexpr size_t kMaxCombinationMismatches = 4;
 
   struct column_state
   {
@@ -51,6 +59,54 @@ namespace
   bool is_all_filler(const combination_key &key)
   {
     return key.find('1') == std::string::npos;
+  }
+
+  // Number of rows where present differs from key's presence bit.
+  size_t hamming_distance(const std::vector<bool> &present,
+                          const combination_key    &key)
+  {
+    size_t dist {};
+    for (size_t r {}; r < present.size(); ++r)
+    {
+      if (present[r] != (key[r] == '1'))
+      {
+        ++dist;
+      }
+    }
+    return dist;
+  }
+
+  // Non-rare combination keys, sorted by ascending Hamming distance to
+  // anchor_present, capped to kMaxCombinationMismatches.
+  std::vector<combination_key> wanted_targets(
+      const std::unordered_map<combination_key, size_t> &combination_counts,
+      const std::vector<bool>                           &anchor_present)
+  {
+    std::vector<std::pair<size_t, combination_key>> scored;
+    for (auto &[key, count] : combination_counts)
+    {
+      if (count < kRarityThreshold)
+      {
+        continue; // not "wanted"
+      }
+      size_t dist { hamming_distance(anchor_present, key) };
+      if (dist == 0 || dist > kMaxCombinationMismatches)
+      {
+        continue; // dist==0 defensive-only: structurally unreachable, since
+                  // wanted keys are non-rare and the anchor's key is rare
+      }
+      scored.push_back({ dist, key });
+    }
+    std::sort(scored.begin(), scored.end(),
+              [](auto &a, auto &b) { return a.first < b.first; });
+
+    std::vector<combination_key> out;
+    out.reserve(scored.size());
+    for (auto &[dist, key] : scored)
+    {
+      out.push_back(key);
+    }
+    return out;
   }
 
   bool state_is_consistent(const column_state &state)
@@ -383,6 +439,24 @@ namespace
     }
   }
 
+  enum class row_action
+  {
+    no_op,
+    push,
+    pull
+  };
+
+  // Required action for row r given the anchor's current presence and the
+  // target key's desired presence bit.
+  row_action required_action(bool anchor_present_r, bool target_present_r)
+  {
+    if (anchor_present_r == target_present_r)
+    {
+      return row_action::no_op;
+    }
+    return target_present_r ? row_action::pull : row_action::push;
+  }
+
   // Runs up to kMaxRefinementPass passes of the rare-combination merge
   // search, sweeping columns either forward (0 -> n-1) or backward
   // (n-1 -> 0) within each pass. Mutates variants' token tables in place.
@@ -441,72 +515,109 @@ namespace
           continue;
         }
 
+        auto targets { wanted_targets(combination_counts, anchor_state.present) };
+
         bool            best_found { false };
         scenario_result best;
 
-        std::vector<move_candidate> chosen;
-
-        std::function<void(size_t)> recurse = [&](size_t r)
+        auto consider = [&](scenario_result &&eval)
         {
-          if (r == rows)
+          if (!eval.feasible || eval.score < 0)
           {
-            auto eval { evaluate_scenario(
-                variants, chosen, i, combination_counts, kRarityThreshold) };
-            if (!eval.feasible || eval.score < 0)
-            {
-              return;
-            }
-
-            bool better {};
-            if (!best_found)
-            {
-              better = true;
-            }
-            else if (eval.score != best.score)
-            {
-              better = eval.score > best.score;
-            }
-            else if (auto eval_touches
-                     = forward ? eval.touches_left_col : eval.touches_right_col,
-                     best_touches
-                     = forward ? best.touches_left_col : best.touches_right_col;
-                     eval_touches != best_touches)
-            {
-              better = !eval_touches;
-            }
-            else if (eval.pull_count != best.pull_count)
-            {
-              better = eval.pull_count < best.pull_count;
-            }
-            else
-            {
-              better = false;
-            }
-
-            if (better)
-            {
-              best_found = true;
-              best       = std::move(eval);
-            }
             return;
           }
 
-          for (auto &opt : options[r])
+          bool better {};
+          if (!best_found)
           {
-            if (opt)
-            {
-              chosen.push_back(*opt);
-              recurse(r + 1);
-              chosen.pop_back();
-            }
-            else
-            {
-              recurse(r + 1);
-            }
+            better = true;
+          }
+          else if (eval.score != best.score)
+          {
+            better = eval.score > best.score;
+          }
+          else if (auto eval_touches
+                   = forward ? eval.touches_left_col : eval.touches_right_col,
+                   best_touches
+                   = forward ? best.touches_left_col : best.touches_right_col;
+                   eval_touches != best_touches)
+          {
+            better = !eval_touches;
+          }
+          else if (eval.pull_count != best.pull_count)
+          {
+            better = eval.pull_count < best.pull_count;
+          }
+          else
+          {
+            better = false;
+          }
+
+          if (better)
+          {
+            best_found = true;
+            best       = std::move(eval);
           }
         };
 
-        recurse(0);
+        for (auto &target_key : targets)
+        {
+          std::vector<std::vector<move_candidate>> row_choices(rows);
+          bool                                      feasible { true };
+
+          for (size_t r {}; r < rows && feasible; ++r)
+          {
+            row_action action { required_action(anchor_state.present[r],
+                                                 target_key[r] == '1') };
+            if (action == row_action::no_op)
+            {
+              continue; // row_choices[r] stays empty -> not branched on
+            }
+
+            bool want_pull { action == row_action::pull };
+            for (auto &cand : options[r])
+            {
+              if (cand && cand->is_pull == want_pull)
+              {
+                row_choices[r].push_back(*cand);
+              }
+            }
+            if (row_choices[r].empty())
+            {
+              feasible = false; // required row has no matching candidate
+            }
+          }
+
+          if (!feasible)
+          {
+            continue;
+          }
+
+          std::vector<move_candidate> chosen;
+
+          std::function<void(size_t)> generate = [&](size_t r)
+          {
+            if (r == rows)
+            {
+              consider(evaluate_scenario(
+                  variants, chosen, i, combination_counts, kRarityThreshold));
+              return;
+            }
+            if (row_choices[r].empty())
+            {
+              generate(r + 1); // no-op row: not part of chosen
+              return;
+            }
+            for (auto &cand : row_choices[r])
+            {
+              chosen.push_back(cand);
+              generate(r + 1);
+              chosen.pop_back();
+            }
+          };
+
+          generate(0);
+        }
 
         if (!best_found)
         {
