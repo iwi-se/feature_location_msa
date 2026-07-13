@@ -34,9 +34,14 @@ void log_event(const std::string& message);
 
 // Emits a family_progress event using the current thread's context, for
 // stages made up of a known number of discrete steps (e.g. the N-1
-// pairwise alignments in align_file_variants). No-op if no context/sink
-// has been set.
-void report_progress(pipeline_stage stage, size_t current_step, size_t total_steps);
+// pairwise alignments in align_file_variants, or the column sweep in
+// refine_rare_combinations). `detail` is an optional short label (e.g.
+// "forward"/"backward") shown alongside the step fraction. No-op if no
+// context/sink has been set.
+void report_progress(pipeline_stage    stage,
+                     size_t            current_step,
+                     size_t            total_steps,
+                     const std::string& detail = "");
 
 // Emits a family_variant_info event using the current thread's context,
 // reporting how many variants a family has and how many of those are

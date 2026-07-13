@@ -408,6 +408,11 @@ namespace
       {
         size_t i { forward ? idx : n - 1 - idx };
 
+        report_progress(pipeline_stage::refine_rare_combinations,
+                        idx + 1,
+                        n,
+                        forward ? "forward" : "backward");
+
         auto anchor_state { read_column(variants, i) };
         if (!is_rare(key_from_state(anchor_state)))
         {

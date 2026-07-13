@@ -73,7 +73,10 @@ void log_event(const std::string& message)
                                .message     = message });
 }
 
-void report_progress(pipeline_stage stage, size_t current_step, size_t total_steps)
+void report_progress(pipeline_stage    stage,
+                     size_t            current_step,
+                     size_t            total_steps,
+                     const std::string& detail)
 {
   if (g_context.sink == nullptr)
   {
@@ -84,7 +87,8 @@ void report_progress(pipeline_stage stage, size_t current_step, size_t total_ste
                                .family_name  = g_context.family_name,
                                .stage        = stage,
                                .current_step = current_step,
-                               .total_steps  = total_steps });
+                               .total_steps  = total_steps,
+                               .detail       = detail });
 }
 
 void report_variant_counts(size_t variant_count, size_t distinct_variant_count)

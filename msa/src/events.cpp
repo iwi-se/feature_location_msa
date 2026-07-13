@@ -102,6 +102,11 @@ std::string to_json_line(const event& e)
   {
     out << ",\"current_step\":" << e.current_step;
     out << ",\"total_steps\":" << e.total_steps;
+    if (!e.detail.empty())
+    {
+      out << ",\"detail\":";
+      write_json_string(out, e.detail);
+    }
   }
 
   if (e.kind == event_kind::family_variant_info)

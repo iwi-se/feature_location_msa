@@ -42,6 +42,7 @@ struct event
     std::string                                         run_id {};
     size_t                                              current_step {};
     size_t                                              total_steps {};
+    std::string                                         detail {};
     size_t                                              variant_count {};
     size_t                                              distinct_variant_count {};
 };
