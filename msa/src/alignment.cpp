@@ -11,7 +11,6 @@
 #include <iostream>
 #include <limits>
 #include <optional>
-#include <unordered_set>
 #include <utility>
 
 size_t find_most_similar_element(
@@ -587,23 +586,34 @@ void align_file_variants(std::vector<file_variant>& variants,
   {
     ngram_hashes.push_back(*variant.hashed_ngrams);
   }
+  // Scoring stays based on every variant (including duplicates), so
+  // deduplication below only changes which variants get pairwise-aligned,
+  // not how similarity is scored.
   auto                               hash_count { build_hash_count(variants) };
   std::unordered_map<size_t, double> cache {};
 
   // Variants that are byte-identical share the same AST pointer (load_asts
-  // dedupes them). Those don't represent independently-needed alignments,
-  // so track distinct content and only count/report progress for alignments
-  // that bring in genuinely new content.
-  std::unordered_set<node_t*> seen_asts;
-  auto                        note_distinct = [&](size_t index) -> bool
-  { return seen_asts.insert(variants[index].ast->get()).second; };
-
-  std::unordered_set<node_t*> distinct_asts;
-  for (const auto& variant : variants)
+  // dedupes them). Group variants by AST identity so the alignment
+  // algorithm below only ever runs over one representative per distinct
+  // file; duplicates are copied from their representative's finished table
+  // at the end instead of being independently (and redundantly) aligned.
+  std::unordered_map<node_t*, size_t> representative_for_ast;
+  std::vector<size_t>                 distinct_indices;
+  std::unordered_map<size_t, size_t>  duplicate_to_representative;
+  for (size_t i {}; i < variants.size(); ++i)
   {
-    distinct_asts.insert(variant.ast->get());
+    node_t* ast_ptr { variants[i].ast->get() };
+    auto [it, inserted] { representative_for_ast.try_emplace(ast_ptr, i) };
+    if (inserted)
+    {
+      distinct_indices.push_back(i);
+    }
+    else
+    {
+      duplicate_to_representative[i] = it->second;
+    }
   }
-  const size_t distinct_variant_count { distinct_asts.size() };
+  const size_t distinct_variant_count { distinct_indices.size() };
   report_variant_counts(variants.size(), distinct_variant_count);
 
   const size_t total_alignments { distinct_variant_count == 0
@@ -611,63 +621,69 @@ void align_file_variants(std::vector<file_variant>& variants,
                                        : distinct_variant_count - 1 };
   size_t       completed_alignments { 0 };
 
-  auto most_similar_pair_indices { find_most_similar_pair(ngram_hashes,
-                                                          options) };
-
-  align_pairwise(*variants[most_similar_pair_indices.first].m_token_table,
-                 *variants[most_similar_pair_indices.second].m_token_table,
-                 hash_count,
-                 cache);
-  // Only count this as a "needed" alignment if it actually joins two
-  // previously-separate distinct files. If the seed pair happens to share
-  // content (duplicate variants), this call just seeds the first group and
-  // doesn't merge distinct content yet, so it doesn't consume a slot.
-  bool first_new { note_distinct(most_similar_pair_indices.first) };
-  bool second_new { note_distinct(most_similar_pair_indices.second) };
-  if (first_new && second_new)
+  if (distinct_variant_count >= 2)
   {
-    ++completed_alignments;
-    if (total_alignments > 0)
+    std::vector<std::reference_wrapper<const std::vector<size_t>>>
+        distinct_ngram_hashes;
+    for (size_t idx : distinct_indices)
     {
-      report_progress(pipeline_stage::align_file_variants,
-                      completed_alignments,
-                      total_alignments);
+      distinct_ngram_hashes.push_back(*variants[idx].hashed_ngrams);
     }
-  }
 
-  std::vector<std::vector<alignment_token>*> aligned_sequences {
-    &(*variants[most_similar_pair_indices.first].m_token_table),
-    &(*variants[most_similar_pair_indices.second].m_token_table)
-  };
-  std::set<size_t> used_indices { most_similar_pair_indices.first,
-                                  most_similar_pair_indices.second };
+    auto seed_local_pair { find_most_similar_pair(distinct_ngram_hashes,
+                                                   options) };
+    size_t seed_first { distinct_indices[seed_local_pair.first] };
+    size_t seed_second { distinct_indices[seed_local_pair.second] };
 
-  while (used_indices.size() < variants.size())
-  {
-    auto   merged { merge_aligned_sequences(aligned_sequences) };
-    auto   merged_ngram_hashes { hash_ngrams(
-        calculate_ngrams(merged, options.n_gram_size)) };
-    size_t next_most_similar_index { find_most_similar_element(
-        merged_ngram_hashes, ngram_hashes, used_indices) };
-
-    align_pairwise(merged,
-                   *variants[next_most_similar_index].m_token_table,
+    align_pairwise(*variants[seed_first].m_token_table,
+                   *variants[seed_second].m_token_table,
                    hash_count,
                    cache);
-    if (note_distinct(next_most_similar_index))
+    ++completed_alignments;
+    report_progress(pipeline_stage::align_file_variants,
+                    completed_alignments,
+                    total_alignments);
+
+    std::vector<std::vector<alignment_token>*> aligned_sequences {
+      &(*variants[seed_first].m_token_table),
+      &(*variants[seed_second].m_token_table)
+    };
+    std::set<size_t> used_local_indices { seed_local_pair.first,
+                                          seed_local_pair.second };
+
+    while (used_local_indices.size() < distinct_variant_count)
     {
+      auto   merged { merge_aligned_sequences(aligned_sequences) };
+      auto   merged_ngram_hashes { hash_ngrams(
+          calculate_ngrams(merged, options.n_gram_size)) };
+      size_t next_local_index { find_most_similar_element(
+          merged_ngram_hashes, distinct_ngram_hashes, used_local_indices) };
+      size_t next_variant_index { distinct_indices[next_local_index] };
+
+      align_pairwise(merged,
+                     *variants[next_variant_index].m_token_table,
+                     hash_count,
+                     cache);
       ++completed_alignments;
       report_progress(pipeline_stage::align_file_variants,
                       completed_alignments,
                       total_alignments);
+
+      used_local_indices.insert(next_local_index);
+
+      realign_aligned_sequence(aligned_sequences, merged);
+
+      aligned_sequences.push_back(
+          &(*variants[next_variant_index].m_token_table));
     }
+  }
 
-    used_indices.insert(next_most_similar_index);
-
-    realign_aligned_sequence(aligned_sequences, merged);
-
-    aligned_sequences.push_back(
-        &(*variants[next_most_similar_index].m_token_table));
+  // Duplicates never went through the alignment loop above, so their token
+  // tables are still at their original (pre-alignment) length; copy the
+  // finished, filler-padded table from their representative.
+  for (const auto& [dup, rep] : duplicate_to_representative)
+  {
+    variants[dup].m_token_table = variants[rep].m_token_table;
   }
 
   constexpr size_t kMaxRefinementIterations { 50 };
