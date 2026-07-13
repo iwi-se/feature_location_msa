@@ -1,7 +1,8 @@
 #include "combination_refinement.hpp"
+#include "event_sink.hpp"
 #include <functional>
-#include <iostream>
 #include <optional>
+#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -610,16 +611,15 @@ void refine_rare_combinations(std::vector<file_variant> &variants)
   {
     case winner_t::before :
       restore_tables(variants, original_tables);
-      std::cout
-          << "  [combination refinement] kept original (no improving pass)\n";
+      log_event("[combination refinement] kept original (no improving pass)");
       break;
     case winner_t::forward :
       restore_tables(variants, forward_tables);
-      std::cout << "  [combination refinement] kept forward pass result\n";
+      log_event("[combination refinement] kept forward pass result");
       break;
     case winner_t::backward :
       restore_tables(variants, backward_tables);
-      std::cout << "  [combination refinement] kept backward pass result\n";
+      log_event("[combination refinement] kept backward pass result");
       break;
   }
 
@@ -674,12 +674,16 @@ void refine_rare_combinations(std::vector<file_variant> &variants)
     {
       if (variant.m_token_table->size() != final_n)
       {
-        std::cout << "  [VALIDATION] ERROR: unequal row lengths\n";
+        log_event("[VALIDATION] ERROR: unequal row lengths");
       }
     }
-    std::cout << "  [VALIDATION] columns " << dbg_initial_n << " -> " << final_n
-              << (final_n <= dbg_initial_n ? " (ok, not grown)" : " (GREW!)")
-              << ", inconsistent columns: " << bad_columns << "\n";
+    std::ostringstream validation_msg;
+    validation_msg << "[VALIDATION] columns " << dbg_initial_n << " -> "
+                   << final_n
+                   << (final_n <= dbg_initial_n ? " (ok, not grown)"
+                                                 : " (GREW!)")
+                   << ", inconsistent columns: " << bad_columns;
+    log_event(validation_msg.str());
   }
 
   auto   final_counts { build_combination_counts(variants) };
@@ -691,7 +695,9 @@ void refine_rare_combinations(std::vector<file_variant> &variants)
       ++rare_remaining;
     }
   }
-  std::cout << "  [combination refinement] " << final_counts.size()
-            << " distinct file combinations, " << rare_remaining << " rare (<"
-            << kRarityThreshold << ")" << std::endl;
+  std::ostringstream summary_msg;
+  summary_msg << "[combination refinement] " << final_counts.size()
+              << " distinct file combinations, " << rare_remaining
+              << " rare (<" << kRarityThreshold << ")";
+  log_event(summary_msg.str());
 }

@@ -1,3 +1,8 @@
 
 **/build/
 **/build-debug/
+
+input/
+output/
+dashboard/.venv/
+dashboard/__pycache__/

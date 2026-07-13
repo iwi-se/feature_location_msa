@@ -1,5 +1,6 @@
 #include "alignment.hpp"
 #include "core.hpp"
+#include "event_sink.hpp"
 #include "helper.hpp"
 #include "preprocessing.hpp"
 #include <algorithm>
@@ -589,6 +590,27 @@ void align_file_variants(std::vector<file_variant>& variants,
   auto                               hash_count { build_hash_count(variants) };
   std::unordered_map<size_t, double> cache {};
 
+  // Variants that are byte-identical share the same AST pointer (load_asts
+  // dedupes them). Those don't represent independently-needed alignments,
+  // so track distinct content and only count/report progress for alignments
+  // that bring in genuinely new content.
+  std::unordered_set<node_t*> seen_asts;
+  auto                        note_distinct = [&](size_t index) -> bool
+  { return seen_asts.insert(variants[index].ast->get()).second; };
+
+  std::unordered_set<node_t*> distinct_asts;
+  for (const auto& variant : variants)
+  {
+    distinct_asts.insert(variant.ast->get());
+  }
+  const size_t distinct_variant_count { distinct_asts.size() };
+  report_variant_counts(variants.size(), distinct_variant_count);
+
+  const size_t total_alignments { distinct_variant_count == 0
+                                       ? 0
+                                       : distinct_variant_count - 1 };
+  size_t       completed_alignments { 0 };
+
   auto most_similar_pair_indices { find_most_similar_pair(ngram_hashes,
                                                           options) };
 
@@ -596,6 +618,22 @@ void align_file_variants(std::vector<file_variant>& variants,
                  *variants[most_similar_pair_indices.second].m_token_table,
                  hash_count,
                  cache);
+  // Only count this as a "needed" alignment if it actually joins two
+  // previously-separate distinct files. If the seed pair happens to share
+  // content (duplicate variants), this call just seeds the first group and
+  // doesn't merge distinct content yet, so it doesn't consume a slot.
+  bool first_new { note_distinct(most_similar_pair_indices.first) };
+  bool second_new { note_distinct(most_similar_pair_indices.second) };
+  if (first_new && second_new)
+  {
+    ++completed_alignments;
+    if (total_alignments > 0)
+    {
+      report_progress(pipeline_stage::align_file_variants,
+                      completed_alignments,
+                      total_alignments);
+    }
+  }
 
   std::vector<std::vector<alignment_token>*> aligned_sequences {
     &(*variants[most_similar_pair_indices.first].m_token_table),
@@ -616,6 +654,13 @@ void align_file_variants(std::vector<file_variant>& variants,
                    *variants[next_most_similar_index].m_token_table,
                    hash_count,
                    cache);
+    if (note_distinct(next_most_similar_index))
+    {
+      ++completed_alignments;
+      report_progress(pipeline_stage::align_file_variants,
+                      completed_alignments,
+                      total_alignments);
+    }
 
     used_indices.insert(next_most_similar_index);
 
