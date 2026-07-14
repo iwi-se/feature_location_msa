@@ -77,3 +77,24 @@ void print_guide_tree(const guide_tree& tree, const file_family& family)
 
   print_guide_tree_node(tree.root, family, "", true);
 }
+
+variant_dedup_groups
+    group_variants_by_ast(const std::vector<file_variant>& variants)
+{
+  variant_dedup_groups groups;
+  std::unordered_map<node_t*, size_t> representative_for_ast;
+
+  for (size_t i {}; i < variants.size(); ++i)
+  {
+    node_t* ast_ptr { variants[i].ast->get() };
+    auto [it, inserted] { representative_for_ast.try_emplace(ast_ptr, i) };
+    if (inserted)
+    {
+      groups.distinct_indices.push_back(i);
+    }
+    groups.representative_of[i] = it->second;
+    groups.members_of[it->second].push_back(i);
+  }
+
+  return groups;
+}

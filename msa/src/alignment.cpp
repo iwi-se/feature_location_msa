@@ -597,28 +597,14 @@ void align_file_variants(std::vector<file_variant>& variants,
   // algorithm below only ever runs over one representative per distinct
   // file; duplicates are copied from their representative's finished table
   // at the end instead of being independently (and redundantly) aligned.
-  std::unordered_map<node_t*, size_t> representative_for_ast;
-  std::vector<size_t>                 distinct_indices;
-  std::unordered_map<size_t, size_t>  duplicate_to_representative;
-  for (size_t i {}; i < variants.size(); ++i)
-  {
-    node_t* ast_ptr { variants[i].ast->get() };
-    auto [it, inserted] { representative_for_ast.try_emplace(ast_ptr, i) };
-    if (inserted)
-    {
-      distinct_indices.push_back(i);
-    }
-    else
-    {
-      duplicate_to_representative[i] = it->second;
-    }
-  }
+  auto         groups { group_variants_by_ast(variants) };
+  const auto&  distinct_indices { groups.distinct_indices };
   const size_t distinct_variant_count { distinct_indices.size() };
   report_variant_counts(variants.size(), distinct_variant_count);
 
   const size_t total_alignments { distinct_variant_count == 0
-                                       ? 0
-                                       : distinct_variant_count - 1 };
+                                      ? 0
+                                      : distinct_variant_count - 1 };
   size_t       completed_alignments { 0 };
 
   if (distinct_variant_count >= 2)
@@ -630,8 +616,8 @@ void align_file_variants(std::vector<file_variant>& variants,
       distinct_ngram_hashes.push_back(*variants[idx].hashed_ngrams);
     }
 
-    auto seed_local_pair { find_most_similar_pair(distinct_ngram_hashes,
-                                                   options) };
+    auto   seed_local_pair { find_most_similar_pair(distinct_ngram_hashes,
+                                                  options) };
     size_t seed_first { distinct_indices[seed_local_pair.first] };
     size_t seed_second { distinct_indices[seed_local_pair.second] };
 
@@ -681,9 +667,12 @@ void align_file_variants(std::vector<file_variant>& variants,
   // Duplicates never went through the alignment loop above, so their token
   // tables are still at their original (pre-alignment) length; copy the
   // finished, filler-padded table from their representative.
-  for (const auto& [dup, rep] : duplicate_to_representative)
+  for (const auto& [row, rep] : groups.representative_of)
   {
-    variants[dup].m_token_table = variants[rep].m_token_table;
+    if (row != rep)
+    {
+      variants[row].m_token_table = variants[rep].m_token_table;
+    }
   }
 
   constexpr size_t kMaxRefinementIterations { 50 };

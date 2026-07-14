@@ -1,5 +1,6 @@
 #include "combination_refinement.hpp"
 #include "event_sink.hpp"
+#include "helper.hpp"
 #include <algorithm>
 #include <functional>
 #include <optional>
@@ -254,6 +255,27 @@ namespace
     return out;
   }
 
+  // Expands moves chosen for representative rows into one move per row in
+  // each representative's duplicate group (identity for non-duplicated
+  // rows). Must be applied before evaluate_scenario/apply, since those need
+  // to see every real row's state, not just representatives'.
+  std::vector<move_candidate>
+      expand_group_moves(const std::vector<move_candidate> &rep_moves,
+                         const variant_dedup_groups         &groups)
+  {
+    std::vector<move_candidate> out;
+    for (auto &m : rep_moves)
+    {
+      for (size_t row : groups.members_of.at(m.row))
+      {
+        move_candidate expanded { m };
+        expanded.row = row;
+        out.push_back(expanded);
+      }
+    }
+    return out;
+  }
+
   struct scenario_result
   {
       bool                                         feasible { false };
@@ -462,9 +484,12 @@ namespace
   // Runs up to kMaxRefinementPass passes of the rare-combination merge
   // search, sweeping columns either forward (0 -> n-1) or backward
   // (n-1 -> 0) within each pass. Mutates variants' token tables in place.
-  void run_refinement_passes(std::vector<file_variant> &variants, bool forward)
+  void run_refinement_passes(std::vector<file_variant>  &variants,
+                             bool                         forward,
+                             const variant_dedup_groups &groups)
   {
-    size_t rows { variants.size() };
+    size_t      rows { variants.size() };
+    const auto &representatives { groups.distinct_indices };
 
     for (size_t pass {}; pass < kMaxRefinementPass; ++pass)
     {
@@ -500,14 +525,20 @@ namespace
 
         std::string anchor_text { common_text(anchor_state) };
 
-        std::vector<std::vector<std::optional<move_candidate>>> options(rows);
+        // Candidates are computed once per representative row, not once per
+        // real row: duplicate rows (same AST) always yield identical
+        // candidates, so computing them per row would be pure waste and
+        // would blow up the scenario branching below combinatorially.
+        std::vector<std::vector<std::optional<move_candidate>>> options(
+            representatives.size());
         bool any_option { false };
-        for (size_t r {}; r < rows; ++r)
+        for (size_t ri {}; ri < representatives.size(); ++ri)
         {
-          options[r].push_back(std::nullopt); // no_op
-          for (auto &cand : row_candidates(variants, i, r, n, anchor_text))
+          size_t rep { representatives[ri] };
+          options[ri].push_back(std::nullopt); // no_op
+          for (auto &cand : row_candidates(variants, i, rep, n, anchor_text))
           {
-            options[r].push_back(cand);
+            options[ri].push_back(cand);
             any_option = true;
           }
         }
@@ -565,27 +596,33 @@ namespace
 
         for (auto &target_key : targets)
         {
-          std::vector<std::vector<move_candidate>> row_choices(rows);
-          bool                                     feasible { true };
+          // Branched on per representative only: since duplicate rows are
+          // content-identical, required_action and target_key bits agree
+          // across a whole group (see expand_group_moves), so a
+          // representative's decision speaks for its entire group.
+          std::vector<std::vector<move_candidate>> row_choices(
+              representatives.size());
+          bool feasible { true };
 
-          for (size_t r {}; r < rows && feasible; ++r)
+          for (size_t ri {}; ri < representatives.size() && feasible; ++ri)
           {
+            size_t     r { representatives[ri] };
             row_action action { required_action(anchor_state.present[r],
                                                 target_key[r] == '1') };
             if (action == row_action::no_op)
             {
-              continue; // row_choices[r] stays empty -> not branched on
+              continue; // row_choices[ri] stays empty -> not branched on
             }
 
             bool want_pull { action == row_action::pull };
-            for (auto &cand : options[r])
+            for (auto &cand : options[ri])
             {
               if (cand && cand->is_pull == want_pull)
               {
-                row_choices[r].push_back(*cand);
+                row_choices[ri].push_back(*cand);
               }
             }
-            if (row_choices[r].empty())
+            if (row_choices[ri].empty())
             {
               feasible = false; // required row has no matching candidate
             }
@@ -611,23 +648,26 @@ namespace
 
           std::vector<move_candidate> chosen;
 
-          std::function<void(size_t)> generate = [&](size_t r)
+          std::function<void(size_t)> generate = [&](size_t ri)
           {
-            if (r == rows)
+            if (ri == representatives.size())
             {
-              consider(evaluate_scenario(
-                  variants, chosen, i, combination_counts, kRarityThreshold));
+              consider(evaluate_scenario(variants,
+                                         expand_group_moves(chosen, groups),
+                                         i,
+                                         combination_counts,
+                                         kRarityThreshold));
               return;
             }
-            if (row_choices[r].empty())
+            if (row_choices[ri].empty())
             {
-              generate(r + 1); // no-op row: not part of chosen
+              generate(ri + 1); // no-op row: not part of chosen
               return;
             }
-            for (auto &cand : row_choices[r])
+            for (auto &cand : row_choices[ri])
             {
               chosen.push_back(cand);
-              generate(r + 1);
+              generate(ri + 1);
               chosen.pop_back();
             }
           };
@@ -701,19 +741,24 @@ void refine_rare_combinations(std::vector<file_variant> &variants)
 
   size_t dbg_initial_n { variants.front().m_token_table->size() };
 
+  // Computed once and reused across every pass and both sweep directions:
+  // AST identity (what grouping is keyed on) never changes as tables are
+  // mutated/restored below, since only m_token_table is touched.
+  auto groups { group_variants_by_ast(variants) };
+
   auto   original_tables { snapshot_tables(variants) };
   auto   before_counts { build_combination_counts(variants) };
   size_t before_rare { count_rare_combinations(before_counts) };
   size_t before_combos { before_counts.size() };
 
-  run_refinement_passes(variants, /*forward=*/true);
+  run_refinement_passes(variants, /*forward=*/true, groups);
   auto   forward_tables { snapshot_tables(variants) };
   auto   forward_counts { build_combination_counts(variants) };
   size_t forward_rare { count_rare_combinations(forward_counts) };
   size_t forward_combos { forward_counts.size() };
 
   restore_tables(variants, original_tables);
-  run_refinement_passes(variants, /*forward=*/false);
+  run_refinement_passes(variants, /*forward=*/false, groups);
   auto   backward_tables { snapshot_tables(variants) };
   auto   backward_counts { build_combination_counts(variants) };
   size_t backward_rare { count_rare_combinations(backward_counts) };
