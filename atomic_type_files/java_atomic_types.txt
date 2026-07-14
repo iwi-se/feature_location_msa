@@ -6,6 +6,5 @@ field_access
 array_access
 class_literal
 modifiers
-formal_parameter
 catch_formal_parameter
 package_declaration
