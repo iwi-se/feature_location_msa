@@ -638,7 +638,8 @@ namespace
             num_scenarios *= std::max(1ul, row.size());
           }
           log_event("Found " + std::to_string(num_scenarios)
-                    + " scenarios in column " + std::to_string(idx + 1));
+                    + " scenarios in column " + std::to_string(i + 1)
+                    + " with text " + anchor_text);
           if (num_scenarios > kMaxScenarios)
           {
             log_event("Too many scenarios, skipping");
