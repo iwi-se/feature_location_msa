@@ -10,14 +10,15 @@
 namespace
 {
   constexpr size_t kRarityThreshold   = 10;
-  constexpr size_t kMaxRefinementPass = 10;
+  constexpr size_t kMaxRefinementPass = 20;
   // Cap on Hamming distance (# of mismatched rows) between a rare anchor
   // column's presence pattern and a "wanted" (non-rare) target combination
   // we're willing to try to move it toward. Keeps the per-column search
   // bounded to combinations plausibly reachable with the ~1-2 candidate
   // moves available per row, instead of every distinct combination in the
   // file.
-  constexpr size_t kMaxCombinationMismatches = 4;
+  constexpr size_t kMaxCombinationMismatches = 100;
+  constexpr size_t kMaxScenarios             = 10'0000;
 
   struct column_state
   {
@@ -63,7 +64,7 @@ namespace
 
   // Number of rows where present differs from key's presence bit.
   size_t hamming_distance(const std::vector<bool> &present,
-                          const combination_key    &key)
+                          const combination_key   &key)
   {
     size_t dist {};
     for (size_t r {}; r < present.size(); ++r)
@@ -97,7 +98,8 @@ namespace
       }
       scored.push_back({ dist, key });
     }
-    std::sort(scored.begin(), scored.end(),
+    std::sort(scored.begin(),
+              scored.end(),
               [](auto &a, auto &b) { return a.first < b.first; });
 
     std::vector<combination_key> out;
@@ -515,7 +517,8 @@ namespace
           continue;
         }
 
-        auto targets { wanted_targets(combination_counts, anchor_state.present) };
+        auto targets { wanted_targets(combination_counts,
+                                      anchor_state.present) };
 
         bool            best_found { false };
         scenario_result best;
@@ -563,12 +566,12 @@ namespace
         for (auto &target_key : targets)
         {
           std::vector<std::vector<move_candidate>> row_choices(rows);
-          bool                                      feasible { true };
+          bool                                     feasible { true };
 
           for (size_t r {}; r < rows && feasible; ++r)
           {
             row_action action { required_action(anchor_state.present[r],
-                                                 target_key[r] == '1') };
+                                                target_key[r] == '1') };
             if (action == row_action::no_op)
             {
               continue; // row_choices[r] stays empty -> not branched on
@@ -590,6 +593,19 @@ namespace
 
           if (!feasible)
           {
+            continue;
+          }
+
+          size_t num_scenarios { 1 };
+          for (const auto row : row_choices)
+          {
+            num_scenarios *= std::max(1ul, row.size());
+          }
+          log_event("Found " + std::to_string(num_scenarios)
+                    + " scenarios in column " + std::to_string(idx + 1));
+          if (num_scenarios > kMaxScenarios)
+          {
+            log_event("Too many scenarios, skipping");
             continue;
           }
 
@@ -800,7 +816,7 @@ void refine_rare_combinations(std::vector<file_variant> &variants)
     validation_msg << "[VALIDATION] columns " << dbg_initial_n << " -> "
                    << final_n
                    << (final_n <= dbg_initial_n ? " (ok, not grown)"
-                                                 : " (GREW!)")
+                                                : " (GREW!)")
                    << ", inconsistent columns: " << bad_columns;
     log_event(validation_msg.str());
   }
@@ -816,7 +832,7 @@ void refine_rare_combinations(std::vector<file_variant> &variants)
   }
   std::ostringstream summary_msg;
   summary_msg << "[combination refinement] " << final_counts.size()
-              << " distinct file combinations, " << rare_remaining
-              << " rare (<" << kRarityThreshold << ")";
+              << " distinct file combinations, " << rare_remaining << " rare (<"
+              << kRarityThreshold << ")";
   log_event(summary_msg.str());
 }
