@@ -261,7 +261,7 @@ namespace
   // to see every real row's state, not just representatives'.
   std::vector<move_candidate>
       expand_group_moves(const std::vector<move_candidate> &rep_moves,
-                         const variant_dedup_groups         &groups)
+                         const variant_dedup_groups        &groups)
   {
     std::vector<move_candidate> out;
     for (auto &m : rep_moves)
@@ -485,7 +485,7 @@ namespace
   // search, sweeping columns either forward (0 -> n-1) or backward
   // (n-1 -> 0) within each pass. Mutates variants' token tables in place.
   void run_refinement_passes(std::vector<file_variant>  &variants,
-                             bool                         forward,
+                             bool                        forward,
                              const variant_dedup_groups &groups)
   {
     size_t      rows { variants.size() };
@@ -493,6 +493,13 @@ namespace
 
     for (size_t pass {}; pass < kMaxRefinementPass; ++pass)
     {
+      std::ostringstream progress_detail;
+      progress_detail << (forward ? "forward" : "backward");
+      report_progress(pipeline_stage::refine_rare_combinations,
+                      pass + 1,
+                      kMaxRefinementPass,
+                      progress_detail.str());
+
       auto   combination_counts { build_combination_counts(variants) };
       size_t n { variants.front().m_token_table->size() };
 
@@ -508,14 +515,6 @@ namespace
       for (size_t idx {}; idx < n; ++idx)
       {
         size_t i { forward ? idx : n - 1 - idx };
-
-        std::ostringstream progress_detail;
-        progress_detail << (forward ? "forward" : "backward") << ", pass "
-                        << (pass + 1) << "/" << kMaxRefinementPass;
-        report_progress(pipeline_stage::refine_rare_combinations,
-                        idx + 1,
-                        n,
-                        progress_detail.str());
 
         auto anchor_state { read_column(variants, i) };
         if (!is_rare(key_from_state(anchor_state)))
