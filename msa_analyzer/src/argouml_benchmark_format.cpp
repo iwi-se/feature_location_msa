@@ -1,6 +1,7 @@
 #include "argouml_benchmark_format.hpp"
 #include "tree.hpp"
 #include <algorithm>
+#include <regex>
 #include <set>
 #include <stack>
 #include <string>
@@ -192,6 +193,16 @@ std::string get_class_fqn(std::shared_ptr<node_t> node)
   return package_name.empty() ? identifier : package_name + "." + identifier;
 }
 
+// The benchmark format requires no whitespace around generic/array
+// delimiters (e.g. "Set<Critic>", "Map<String,Foo>"), but keeps
+// whitespace that is a required token separator, e.g. the space in
+// "Class<? extends MemberFilePersister>".
+std::string normalize_type_whitespace(const std::string &type)
+{
+  static const std::regex delimiter_whitespace { R"(\s*([<>,\[\]])\s*)" };
+  return std::regex_replace(type, delimiter_whitespace, "$1");
+}
+
 std::string get_method_fqn(std::shared_ptr<node_t> node)
 {
   if (!is_method_declaration(node))
@@ -229,10 +240,7 @@ std::string get_method_fqn(std::shared_ptr<node_t> node)
     {
       method_fqn += ",";
     }
-    param_types[i].erase(
-        std::remove(param_types[i].begin(), param_types[i].end(), ' '),
-        param_types[i].end());
-    method_fqn += param_types[i];
+    method_fqn += normalize_type_whitespace(param_types[i]);
   }
   method_fqn += ")";
 
