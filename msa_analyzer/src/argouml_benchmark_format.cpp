@@ -259,19 +259,45 @@ bool operator< (const output_line_t &a, const output_line_t &b)
          || (a.class_fqn == b.class_fqn && a.method_fqn < b.method_fqn);
 }
 
+namespace
+{
+  // Inserts into a set keyed by (class_fqn, method_fqn, is_refinement),
+  // merging or_derived_only via logical AND: a line only stays
+  // or_derived_only if *every* insertion of it was or_derived_only. As soon
+  // as any genuine (non-or-derived) evidence for the same line is seen, it
+  // is upgraded to genuine and stays that way.
+  void insert_merging_provenance(std::set<output_line_t> &lines,
+                                 const output_line_t     &line)
+  {
+    auto it { lines.find(line) };
+    if (it == lines.end())
+    {
+      lines.insert(line);
+      return;
+    }
+    if (it->or_derived_only && !line.or_derived_only)
+    {
+      output_line_t updated { *it };
+      updated.or_derived_only = false;
+      lines.erase(it);
+      lines.insert(updated);
+    }
+  }
+} // namespace
+
 void output_lines_t::insert(const output_line_t &line)
 {
   if (line.is_class_line())
   {
-    class_lines.insert(line);
+    insert_merging_provenance(class_lines, line);
   }
   else if (line.is_method_line())
   {
-    method_lines.insert(line);
+    insert_merging_provenance(method_lines, line);
   }
   else
   {
-    refinement_lines.insert(line);
+    insert_merging_provenance(refinement_lines, line);
   }
 }
 
@@ -314,19 +340,29 @@ void output_lines_t::remove_superfluous_lines()
 
   for (const auto &class_line : class_lines)
   {
+    // A class_line that only holds because of OR-trace expansion does not
+    // prove the class is genuinely and exclusively part of this feature, so
+    // it must not swallow narrower lines that carry genuine evidence of
+    // their own (see output_line_t::or_derived_only).
     std::erase_if(method_lines,
                   [&class_line](const output_line_t &line)
                   {
-                    return line.class_fqn.starts_with(class_line.class_fqn
-                                                      + ".")
-                           || line.class_fqn == class_line.class_fqn;
+                    bool covers { line.class_fqn.starts_with(
+                                     class_line.class_fqn + ".")
+                                 || line.class_fqn == class_line.class_fqn };
+                    return covers
+                           && !(class_line.or_derived_only
+                                && !line.or_derived_only);
                   });
     std::erase_if(refinement_lines,
                   [&class_line](const output_line_t &line)
                   {
-                    return line.class_fqn.starts_with(class_line.class_fqn
-                                                      + ".")
-                           || line.class_fqn == class_line.class_fqn;
+                    bool covers { line.class_fqn.starts_with(
+                                     class_line.class_fqn + ".")
+                                 || line.class_fqn == class_line.class_fqn };
+                    return covers
+                           && !(class_line.or_derived_only
+                                && !line.or_derived_only);
                   });
   }
 
@@ -335,8 +371,11 @@ void output_lines_t::remove_superfluous_lines()
     std::erase_if(refinement_lines,
                   [&method_line](const output_line_t &line)
                   {
-                    return line.class_fqn == method_line.class_fqn
-                           && line.method_fqn == method_line.method_fqn;
+                    bool covers { line.class_fqn == method_line.class_fqn
+                                 && line.method_fqn == method_line.method_fqn };
+                    return covers
+                           && !(method_line.or_derived_only
+                                && !line.or_derived_only);
                   });
   }
 }
@@ -438,7 +477,8 @@ std::vector<std::shared_ptr<node_t>> find_all_import_nodes(std::shared_ptr<node_
 
 output_lines_t find_full_traces(
     const std::vector<std::shared_ptr<node_t>> &included_nodes,
-    const std::vector<std::shared_ptr<node_t>> &all_roots)
+    const std::vector<std::shared_ptr<node_t>> &all_roots,
+    const std::string                          &target_feature)
 {
   output_lines_t output_lines {};
 
@@ -459,6 +499,7 @@ output_lines_t find_full_traces(
   for (const auto &class_node : class_nodes)
   {
     bool is_fully_included { false };
+    bool has_genuine_evidence { false };
     for (auto &leaf_weak : class_node->get_leaves())
     {
       auto leaf = leaf_weak.lock();
@@ -469,13 +510,18 @@ output_lines_t find_full_traces(
                  != included_nodes.end())
       {
         is_fully_included = true;
-        break;
+        if (leaf->feature == target_feature)
+        {
+          has_genuine_evidence = true;
+          break;
+        }
       }
     }
     if (is_fully_included)
     {
       auto class_identifier { get_class_fqn(class_node) };
-      output_lines.insert({ class_identifier, "", false });
+      output_lines.insert(
+          { class_identifier, "", false, !has_genuine_evidence });
     }
   }
 
@@ -491,6 +537,7 @@ output_lines_t find_full_traces(
   for (const auto &method_node : method_nodes)
   {
     bool is_fully_included { false };
+    bool has_genuine_evidence { false };
     for (auto &leaf_weak : method_node->get_leaves())
     {
       auto leaf = leaf_weak.lock();
@@ -503,7 +550,11 @@ output_lines_t find_full_traces(
                  != included_nodes.end())
       {
         is_fully_included = true;
-        break;
+        if (leaf->feature == target_feature)
+        {
+          has_genuine_evidence = true;
+          break;
+        }
       }
     }
     if (is_fully_included)
@@ -511,7 +562,10 @@ output_lines_t find_full_traces(
       auto class_identifier { get_class_fqn(
           get_parent_class_node(method_node)) };
       auto method_identifier { get_method_fqn(method_node) };
-      output_lines.insert({ class_identifier, method_identifier, false });
+      output_lines.insert({ class_identifier,
+                            method_identifier,
+                            false,
+                            !has_genuine_evidence });
     }
   }
 
@@ -520,7 +574,8 @@ output_lines_t find_full_traces(
 
 output_lines_t
     find_refinement_traces(const std::vector<std::shared_ptr<node_t>> &included_tokens,
-                           const std::vector<std::shared_ptr<node_t>> &all_roots)
+                           const std::vector<std::shared_ptr<node_t>> &all_roots,
+                           const std::string                          &target_feature)
 {
   output_lines_t output_lines;
 
@@ -541,6 +596,7 @@ output_lines_t
   {
     auto &leaves { import_declaration->get_leaves() };
     bool  is_trace_l { false };
+    bool  import_has_genuine_evidence { false };
     for (auto &leaf_weak : leaves)
     {
       auto leaf = leaf_weak.lock();
@@ -550,7 +606,11 @@ output_lines_t
           != included_tokens.end())
       {
         is_trace_l = true;
-        break;
+        if (leaf->feature == target_feature)
+        {
+          import_has_genuine_evidence = true;
+          break;
+        }
       }
     }
 
@@ -567,7 +627,10 @@ output_lines_t
 
       for (const auto &class_node : class_nodes)
       {
-        output_lines.insert({ get_class_fqn(class_node), "", true });
+        output_lines.insert({ get_class_fqn(class_node),
+                              "",
+                              true,
+                              !import_has_genuine_evidence });
       }
       break;
     }
@@ -588,7 +651,10 @@ output_lines_t
       std::string class_identifier { get_class_fqn(class_node) };
       if (!class_identifier.empty() || !method_identifier.empty())
       {
-        output_lines.insert({ class_identifier, method_identifier, true });
+        output_lines.insert({ class_identifier,
+                              method_identifier,
+                              true,
+                              token->feature != target_feature });
       }
     }
   }
@@ -598,12 +664,13 @@ output_lines_t
 
 output_lines_t build_argouml_benchmark_format_for_file(
     std::vector<std::shared_ptr<node_t>> included_tokens,
-    std::vector<std::shared_ptr<node_t>> all_roots)
+    std::vector<std::shared_ptr<node_t>> all_roots,
+    const std::string                   &target_feature)
 {
-  output_lines_t full_trace_output_lines { find_full_traces(included_tokens,
-                                                             all_roots) };
+  output_lines_t full_trace_output_lines { find_full_traces(
+      included_tokens, all_roots, target_feature) };
   output_lines_t refinement_output_lines { find_refinement_traces(
-      included_tokens, all_roots) };
+      included_tokens, all_roots, target_feature) };
   full_trace_output_lines.insert_many(refinement_output_lines);
   return full_trace_output_lines;
 }

@@ -877,7 +877,7 @@ void analyze(operation_t op)
     for (auto &[feat, nodes] : nodes_by_feature)
     {
       output_lines_t lines {
-        build_argouml_benchmark_format_for_file(nodes, all_roots)
+        build_argouml_benchmark_format_for_file(nodes, all_roots, feat)
       };
       std::lock_guard lock { accumulator_mutex };
       accumulator[feat].insert_many(lines);
