@@ -804,6 +804,33 @@ void analyze(operation_t op)
       return;
     }
 
+    std::vector<std::shared_ptr<node_t>> all_roots {};
+    for (const auto &[sys_id, sys_tok] : systems)
+    {
+      all_roots.push_back(sys_tok.root);
+    }
+
+    std::map<const node_t *, size_t> method_fqn_len_cache {};
+    auto score_of
+        = [&](const std::shared_ptr<node_t> &node) -> size_t
+    {
+      auto method_node { get_parent_method_node(node) };
+      if (method_node == nullptr)
+      {
+        return 0;
+      }
+      auto [it, inserted]
+          = method_fqn_len_cache.try_emplace(method_node.get(), 0);
+      if (inserted)
+      {
+        it->second = get_method_fqn(method_node).size();
+      }
+      return it->second;
+    };
+
+    std::map<std::string, std::vector<std::shared_ptr<node_t>>>
+        nodes_by_feature {};
+
     const size_t col_count { systems.begin()->second.tokens.size() };
     for (size_t col {}; col < col_count; ++col)
     {
@@ -821,35 +848,39 @@ void analyze(operation_t op)
       }
       const std::string feat { transform_dnf_feature(
           get_feature_from_systems(present, op)) };
-      for (auto &[sys_id, sys_tok] : systems)
+
+      bool                    has_owner { false };
+      size_t                  best_score {};
+      size_t                  owner_sys {};
+      std::shared_ptr<node_t> owner_node {};
+      for (auto sys_id : present)
       {
-        if (sys_tok.tokens[col].is_node())
+        auto &node { systems.at(sys_id).tokens[col].node };
+        node->feature = feat;
+        size_t score { score_of(node) };
+        if (!has_owner || score > best_score
+            || (score == best_score && sys_id < owner_sys))
         {
-          sys_tok.tokens[col].node->feature = feat;
+          best_score = score;
+          owner_sys  = sys_id;
+          owner_node = node;
+          has_owner  = true;
         }
+      }
+
+      for (const auto &f : expand_or_feature(feat))
+      {
+        nodes_by_feature[f].push_back(owner_node);
       }
     }
 
-    for (auto &[sys_id, sys_tok] : systems)
+    for (auto &[feat, nodes] : nodes_by_feature)
     {
-      std::map<std::string, std::vector<std::shared_ptr<node_t>>>
-          nodes_by_feature {};
-      for (auto &tok : sys_tok.tokens)
-      {
-        if (tok.is_node())
-        {
-          for (const auto &f : expand_or_feature(tok.node->feature))
-          {
-            nodes_by_feature[f].push_back(tok.node);
-          }
-        }
-      }
-      for (auto &[feat, nodes] : nodes_by_feature)
-      {
-        output_lines_t lines { build_argouml_benchmark_format_for_file(nodes) };
-        std::lock_guard lock { accumulator_mutex };
-        accumulator[feat].insert_many(lines);
-      }
+      output_lines_t lines {
+        build_argouml_benchmark_format_for_file(nodes, all_roots)
+      };
+      std::lock_guard lock { accumulator_mutex };
+      accumulator[feat].insert_many(lines);
     }
   };
 

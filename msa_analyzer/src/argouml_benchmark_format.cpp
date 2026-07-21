@@ -436,7 +436,9 @@ std::vector<std::shared_ptr<node_t>> find_all_import_nodes(std::shared_ptr<node_
   return class_nodes;
 }
 
-output_lines_t find_full_traces(const std::vector<std::shared_ptr<node_t>> &included_nodes)
+output_lines_t find_full_traces(
+    const std::vector<std::shared_ptr<node_t>> &included_nodes,
+    const std::vector<std::shared_ptr<node_t>> &all_roots)
 {
   output_lines_t output_lines {};
 
@@ -445,7 +447,14 @@ output_lines_t find_full_traces(const std::vector<std::shared_ptr<node_t>> &incl
     return output_lines;
   }
 
-  auto class_nodes { find_all_class_nodes(included_nodes[0]->get_root()) };
+  std::vector<std::shared_ptr<node_t>> class_nodes {};
+  for (const auto &root : all_roots)
+  {
+    auto root_class_nodes { find_all_class_nodes(root) };
+    class_nodes.insert(class_nodes.end(),
+                       root_class_nodes.begin(),
+                       root_class_nodes.end());
+  }
 
   for (const auto &class_node : class_nodes)
   {
@@ -470,7 +479,14 @@ output_lines_t find_full_traces(const std::vector<std::shared_ptr<node_t>> &incl
     }
   }
 
-  auto method_nodes { find_all_method_nodes(included_nodes[0]->get_root()) };
+  std::vector<std::shared_ptr<node_t>> method_nodes {};
+  for (const auto &root : all_roots)
+  {
+    auto root_method_nodes { find_all_method_nodes(root) };
+    method_nodes.insert(method_nodes.end(),
+                        root_method_nodes.begin(),
+                        root_method_nodes.end());
+  }
 
   for (const auto &method_node : method_nodes)
   {
@@ -503,7 +519,8 @@ output_lines_t find_full_traces(const std::vector<std::shared_ptr<node_t>> &incl
 }
 
 output_lines_t
-    find_refinement_traces(const std::vector<std::shared_ptr<node_t>> &included_tokens)
+    find_refinement_traces(const std::vector<std::shared_ptr<node_t>> &included_tokens,
+                           const std::vector<std::shared_ptr<node_t>> &all_roots)
 {
   output_lines_t output_lines;
 
@@ -512,8 +529,14 @@ output_lines_t
     return output_lines;
   }
 
-  auto import_declarations { find_all_import_nodes(
-      included_tokens[0]->get_root()) };
+  std::vector<std::shared_ptr<node_t>> import_declarations {};
+  for (const auto &root : all_roots)
+  {
+    auto root_import_declarations { find_all_import_nodes(root) };
+    import_declarations.insert(import_declarations.end(),
+                               root_import_declarations.begin(),
+                               root_import_declarations.end());
+  }
   for (auto &import_declaration : import_declarations)
   {
     auto &leaves { import_declaration->get_leaves() };
@@ -533,8 +556,14 @@ output_lines_t
 
     if (is_trace_l)
     {
-      auto class_nodes { get_top_level_class_nodes(
-          included_tokens[0]->get_root()) };
+      std::vector<std::shared_ptr<node_t>> class_nodes {};
+      for (const auto &root : all_roots)
+      {
+        auto root_class_nodes { get_top_level_class_nodes(root) };
+        class_nodes.insert(class_nodes.end(),
+                           root_class_nodes.begin(),
+                           root_class_nodes.end());
+      }
 
       for (const auto &class_node : class_nodes)
       {
@@ -568,11 +597,13 @@ output_lines_t
 }
 
 output_lines_t build_argouml_benchmark_format_for_file(
-    std::vector<std::shared_ptr<node_t>> included_tokens)
+    std::vector<std::shared_ptr<node_t>> included_tokens,
+    std::vector<std::shared_ptr<node_t>> all_roots)
 {
-  output_lines_t full_trace_output_lines { find_full_traces(included_tokens) };
+  output_lines_t full_trace_output_lines { find_full_traces(included_tokens,
+                                                             all_roots) };
   output_lines_t refinement_output_lines { find_refinement_traces(
-      included_tokens) };
+      included_tokens, all_roots) };
   full_trace_output_lines.insert_many(refinement_output_lines);
   return full_trace_output_lines;
 }

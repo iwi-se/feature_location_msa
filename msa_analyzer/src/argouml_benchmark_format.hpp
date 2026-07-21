@@ -37,5 +37,9 @@ class output_lines_t
     std::set<output_line_t> refinement_lines;
 };
 
+std::shared_ptr<node_t> get_parent_method_node(std::shared_ptr<node_t> node);
+std::string             get_method_fqn(std::shared_ptr<node_t> node);
+
 output_lines_t build_argouml_benchmark_format_for_file(
-    std::vector<std::shared_ptr<node_t>> included_tokens);
+    std::vector<std::shared_ptr<node_t>> included_tokens,
+    std::vector<std::shared_ptr<node_t>> all_roots);
