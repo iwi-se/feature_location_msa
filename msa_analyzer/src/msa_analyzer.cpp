@@ -89,20 +89,35 @@ bool parse_system_msa(
     std::pair<system_t, system_tokens_t>           &out,
     const std::string                              &lang,
     std::map<std::string, std::shared_ptr<node_t>> &tree_cache,
-    const std::set<std::string>                    &atomic_types)
+    const std::set<std::string>                    &atomic_types,
+    const std::map<std::string, size_t>            &variant_id_map)
 {
   std::string system_name {};
   size_t      system_index {};
   if (file)
   {
     std::getline(file, system_name);
-    try
+    if (!variant_id_map.empty())
     {
-      system_index = std::stoul(system_name);
+      auto it { variant_id_map.find(system_name) };
+      if (it == variant_id_map.end())
+      {
+        std::cerr << "system id map: no entry for variant '" << system_name
+                  << "'\n";
+        exit(1);
+      }
+      system_index = it->second;
     }
-    catch (const std::invalid_argument &e)
+    else
     {
-      return false;
+      try
+      {
+        system_index = std::stoul(system_name);
+      }
+      catch (const std::invalid_argument &e)
+      {
+        return false;
+      }
     }
   }
   else
@@ -181,8 +196,9 @@ std::string get_lang_from_file_path(const std::filesystem::path &msa_file)
 }
 
 std::pair<spl_file_t, std::map<system_t, system_tokens_t>>
-    parse_file_msa(const std::filesystem::path &msa_file,
-                   const std::set<std::string> &atomic_types)
+    parse_file_msa(const std::filesystem::path         &msa_file,
+                   const std::set<std::string>         &atomic_types,
+                   const std::map<std::string, size_t> &variant_id_map)
 {
   std::ifstream file(msa_file); // open file for reading
 
@@ -200,7 +216,8 @@ std::pair<spl_file_t, std::map<system_t, system_tokens_t>>
   std::map<std::string, std::shared_ptr<node_t>> tree_cache {};
 
   std::pair<system_t, system_tokens_t> system {};
-  while (parse_system_msa(file, system, lang, tree_cache, atomic_types))
+  while (parse_system_msa(
+      file, system, lang, tree_cache, atomic_types, variant_id_map))
   {
     systems.insert(std::move(system));
   }
@@ -210,8 +227,9 @@ std::pair<spl_file_t, std::map<system_t, system_tokens_t>>
 }
 
 msa_representation_t
-    parse_directory_msa(const std::filesystem::path &msa_dir,
-                        const std::set<std::string> &atomic_types)
+    parse_directory_msa(const std::filesystem::path         &msa_dir,
+                        const std::set<std::string>         &atomic_types,
+                        const std::map<std::string, size_t> &variant_id_map)
 {
   msa_representation_t msa {};
   for (const auto &dir_entry : std::filesystem::directory_iterator(msa_dir))
@@ -220,7 +238,7 @@ msa_representation_t
     {
       continue;
     }
-    auto file_msa { parse_file_msa(dir_entry, atomic_types) };
+    auto file_msa { parse_file_msa(dir_entry, atomic_types, variant_id_map) };
     if (msa.lang == "")
     {
       msa.lang = get_lang_from_file_path(file_msa.first);
@@ -230,17 +248,20 @@ msa_representation_t
   return msa;
 }
 
-msa_representation_t parse_msa(const std::filesystem::path &msa_file,
-                               const std::set<std::string> &atomic_types)
+msa_representation_t
+    parse_msa(const std::filesystem::path         &msa_file,
+             const std::set<std::string>         &atomic_types,
+             const std::map<std::string, size_t> &variant_id_map)
 {
   if (std::filesystem::is_directory(msa_file))
   {
-    return parse_directory_msa(msa_file, atomic_types);
+    return parse_directory_msa(msa_file, atomic_types, variant_id_map);
   }
   else
   {
     msa_representation_t msa {};
-    auto                 file_msa { parse_file_msa(msa_file, atomic_types) };
+    auto                 file_msa { parse_file_msa(
+        msa_file, atomic_types, variant_id_map) };
     msa.lang = get_lang_from_file_path(file_msa.first);
     msa.internal_rep.emplace(std::move(file_msa));
     return msa;
@@ -261,6 +282,7 @@ struct operation_t
     size_t                             threads { 0 };
     std::set<std::string>              atomic_node_types {};
     std::map<std::string, std::string> feature_expression_lookup {};
+    std::map<std::string, size_t>      variant_name_to_system_id {};
 };
 
 void argument_error(char *argv[])
@@ -269,10 +291,12 @@ void argument_error(char *argv[])
       << "Usage: \n"
       << argv[0]
       << " analyze <msa_outputs> <isolation_exe> <spl_spec> [--threads "
-         "N] [--atomic-types-file FILE] [--feature-expressions-file FILE]\n"
+         "N] [--atomic-types-file FILE] [--feature-expressions-file FILE] "
+         "[--system-id-map FILE]\n"
       << argv[0]
       << " render <msa_outputs> <isolation_exe> <spl_spec> "
-         "[--atomic-types-file FILE] [--feature-expressions-file FILE]\n"
+         "[--atomic-types-file FILE] [--feature-expressions-file FILE] "
+         "[--system-id-map FILE]\n"
       << argv[0] << " printSystemNames <msa_outputs>\n";
   exit(1);
 }
@@ -331,6 +355,65 @@ std::set<std::string> parse_atomic_types_flag(int argc, char *argv[], int start)
     if (std::string(argv[i]) == "--atomic-types-file")
     {
       return parse_atomic_types_file(argv[i + 1]);
+    }
+  }
+  return {};
+}
+
+std::map<std::string, size_t>
+    parse_system_id_map_file(const std::filesystem::path &path)
+{
+  std::ifstream file(path);
+  if (!file.is_open())
+  {
+    std::cerr << "--system-id-map: could not open \"" << path.string()
+              << "\"\n";
+    exit(1);
+  }
+
+  std::map<std::string, size_t> variant_id_map;
+  std::string                   line;
+  while (std::getline(file, line))
+  {
+    if (!line.empty() && line.back() == '\r')
+    {
+      line.pop_back();
+    }
+    if (line.empty() || line.starts_with('#'))
+    {
+      continue;
+    }
+
+    size_t comma_pos { line.find(',') };
+    if (comma_pos == std::string::npos)
+    {
+      std::cerr << "--system-id-map: malformed line \"" << line << "\"\n";
+      exit(1);
+    }
+
+    std::string variant_name { line.substr(0, comma_pos) };
+    std::string id_part { line.substr(comma_pos + 1) };
+    try
+    {
+      variant_id_map[variant_name] = std::stoul(id_part);
+    }
+    catch (const std::exception &e)
+    {
+      std::cerr << "--system-id-map: malformed line \"" << line << "\"\n";
+      exit(1);
+    }
+  }
+  return variant_id_map;
+}
+
+std::map<std::string, size_t>
+    parse_system_id_map_flag(int argc, char *argv[], int start)
+{
+  for (int i = start; i < argc - 1; ++i)
+  {
+    if (std::string(argv[i]) == "--system-id-map")
+    {
+      return parse_system_id_map_file(argv[i + 1]);
     }
   }
   return {};
@@ -449,13 +532,17 @@ operation_t cli_arguments(int argc, char *argv[])
     std::map<std::string, std::string> feature_expression_lookup {
       parse_feature_expressions_flag(argc, argv, 5)
     };
+    std::map<std::string, size_t> variant_name_to_system_id {
+      parse_system_id_map_flag(argc, argv, 5)
+    };
     return operation_t { operation_t::operation_type_t::render,
                          msa_path,
                          isolation_executable,
                          spl_specification_file,
                          0,
                          atomic_node_types,
-                         feature_expression_lookup };
+                         feature_expression_lookup,
+                         variant_name_to_system_id };
   }
   else if (operation_type == "analyze")
   {
@@ -472,13 +559,17 @@ operation_t cli_arguments(int argc, char *argv[])
     std::map<std::string, std::string> feature_expression_lookup {
       parse_feature_expressions_flag(argc, argv, 5)
     };
+    std::map<std::string, size_t> variant_name_to_system_id {
+      parse_system_id_map_flag(argc, argv, 5)
+    };
     return operation_t { operation_t::operation_type_t::analyze,
                          msa_path,
                          isolation_executable,
                          spl_specification_file,
                          threads,
                          atomic_node_types,
-                         feature_expression_lookup };
+                         feature_expression_lookup,
+                         variant_name_to_system_id };
   }
   argument_error(argv);
   return operation_t {};
@@ -895,8 +986,8 @@ void analyze(operation_t op)
   auto process_one_file = [op, &accumulator, &accumulator_mutex](
                               const std::filesystem::path &msa_file_path)
   {
-    auto [spl_file, systems]
-        = parse_file_msa(msa_file_path, op.atomic_node_types);
+    auto [spl_file, systems] = parse_file_msa(
+        msa_file_path, op.atomic_node_types, op.variant_name_to_system_id);
 
     if (systems.empty())
     {
@@ -1028,7 +1119,8 @@ void analyze(operation_t op)
 
 void render(operation_t op)
 {
-  auto                  msa { parse_msa(op.msa_path, op.atomic_node_types) };
+  auto                  msa { parse_msa(
+      op.msa_path, op.atomic_node_types, op.variant_name_to_system_id) };
   std::set<std::string> features;
 
   for (const auto &file : msa.internal_rep)

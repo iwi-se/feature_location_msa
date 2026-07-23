@@ -94,7 +94,7 @@ std::vector<file_family_info> discover_files(const options &options)
       fs::path absolute_path { fs::absolute(file_entry.path()) };
 
       add_file_to_map(compute_family_name_from_relative_path(relative_path),
-                      directory_entry.path().stem().string(),
+                      directory_entry.path().filename().string(),
                       absolute_path,
                       file_family_name_to_variant_paths_map);
     }
