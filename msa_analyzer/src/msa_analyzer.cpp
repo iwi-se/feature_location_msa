@@ -255,23 +255,25 @@ struct operation_t
       analyze,
       render
     } operation_type;
-    std::filesystem::path msa_path {};
-    std::filesystem::path isolation_executable {};
-    std::filesystem::path spl_specification_file {};
-    size_t                threads { 0 };
-    std::set<std::string> atomic_node_types {};
+    std::filesystem::path              msa_path {};
+    std::filesystem::path              isolation_executable {};
+    std::filesystem::path              spl_specification_file {};
+    size_t                             threads { 0 };
+    std::set<std::string>              atomic_node_types {};
+    std::map<std::string, std::string> feature_expression_lookup {};
 };
 
 void argument_error(char *argv[])
 {
-  std::cerr << "Usage: \n"
-            << argv[0]
-            << " analyze <msa_outputs> <isolation_exe> <spl_spec> [--threads "
-               "N] [--atomic-types-file FILE]\n"
-            << argv[0]
-            << " render <msa_outputs> <isolation_exe> <spl_spec> "
-               "[--atomic-types-file FILE]\n"
-            << argv[0] << " printSystemNames <msa_outputs>\n";
+  std::cerr
+      << "Usage: \n"
+      << argv[0]
+      << " analyze <msa_outputs> <isolation_exe> <spl_spec> [--threads "
+         "N] [--atomic-types-file FILE] [--feature-expressions-file FILE]\n"
+      << argv[0]
+      << " render <msa_outputs> <isolation_exe> <spl_spec> "
+         "[--atomic-types-file FILE] [--feature-expressions-file FILE]\n"
+      << argv[0] << " printSystemNames <msa_outputs>\n";
   exit(1);
 }
 
@@ -334,6 +336,90 @@ std::set<std::string> parse_atomic_types_flag(int argc, char *argv[], int start)
   return {};
 }
 
+std::string trim(std::string s)
+{
+  s.erase(0, s.find_first_not_of(" \t"));
+  s.erase(s.find_last_not_of(" \t") + 1);
+  return s;
+}
+
+std::string canonical_systems_key(std::vector<size_t> systems)
+{
+  std::sort(systems.begin(), systems.end());
+  std::string result {};
+  for (size_t i {}; i < systems.size(); ++i)
+  {
+    if (i > 0)
+    {
+      result += ",";
+    }
+    result += std::to_string(systems[i]);
+  }
+  return result;
+}
+
+std::map<std::string, std::string>
+    parse_feature_expression_file(const std::filesystem::path &path)
+{
+  std::ifstream file(path);
+  if (!file.is_open())
+  {
+    std::cerr << "--feature-expressions-file: could not open \""
+              << path.string() << "\"\n";
+    exit(1);
+  }
+
+  std::map<std::string, std::string> lookup;
+  std::string                        line;
+  while (std::getline(file, line))
+  {
+    if (!line.empty() && line.back() == '\r')
+    {
+      line.pop_back();
+    }
+    if (line.empty())
+    {
+      continue;
+    }
+
+    size_t colon_pos { line.find(": ") };
+    if (colon_pos == std::string::npos)
+    {
+      continue;
+    }
+
+    std::string         key_part { line.substr(0, colon_pos) };
+    std::string         value_part { trim(line.substr(colon_pos + 2)) };
+    std::vector<size_t> systems {};
+    std::istringstream  key_stream(key_part);
+    std::string         id_str {};
+    while (std::getline(key_stream, id_str, ','))
+    {
+      id_str = trim(id_str);
+      if (!id_str.empty())
+      {
+        systems.push_back(std::stoul(id_str));
+      }
+    }
+
+    lookup[canonical_systems_key(systems)] = value_part;
+  }
+  return lookup;
+}
+
+std::map<std::string, std::string>
+    parse_feature_expressions_flag(int argc, char *argv[], int start)
+{
+  for (int i = start; i < argc - 1; ++i)
+  {
+    if (std::string(argv[i]) == "--feature-expressions-file")
+    {
+      return parse_feature_expression_file(argv[i + 1]);
+    }
+  }
+  return {};
+}
+
 operation_t cli_arguments(int argc, char *argv[])
 {
   if (argc < 3)
@@ -360,12 +446,16 @@ operation_t cli_arguments(int argc, char *argv[])
     std::filesystem::path spl_specification_file { argv[4] };
     std::set<std::string> atomic_node_types { parse_atomic_types_flag(
         argc, argv, 5) };
+    std::map<std::string, std::string> feature_expression_lookup {
+      parse_feature_expressions_flag(argc, argv, 5)
+    };
     return operation_t { operation_t::operation_type_t::render,
                          msa_path,
                          isolation_executable,
                          spl_specification_file,
                          0,
-                         atomic_node_types };
+                         atomic_node_types,
+                         feature_expression_lookup };
   }
   else if (operation_type == "analyze")
   {
@@ -379,12 +469,16 @@ operation_t cli_arguments(int argc, char *argv[])
     size_t                threads { parse_threads_flag(argc, argv, 5) };
     std::set<std::string> atomic_node_types { parse_atomic_types_flag(
         argc, argv, 5) };
+    std::map<std::string, std::string> feature_expression_lookup {
+      parse_feature_expressions_flag(argc, argv, 5)
+    };
     return operation_t { operation_t::operation_type_t::analyze,
                          msa_path,
                          isolation_executable,
                          spl_specification_file,
                          threads,
-                         atomic_node_types };
+                         atomic_node_types,
+                         feature_expression_lookup };
   }
   argument_error(argv);
   return operation_t {};
@@ -437,14 +531,8 @@ std::pair<std::vector<std::string>, std::vector<std::string>>
     right = input.substr(pos + 1);
   }
 
-  // Trim spaces
-  auto trim = [](std::string &s)
-  {
-    s.erase(0, s.find_first_not_of(" \t"));
-    s.erase(s.find_last_not_of(" \t") + 1);
-  };
-  trim(left);
-  trim(right);
+  left  = trim(left);
+  right = trim(right);
 
   return { parse_block(left, '&'), parse_block(right, '|') };
 }
@@ -759,9 +847,20 @@ std::string get_feature_from_systems(const std::vector<size_t> &systems,
     }
   }
 
-  std::string isolation_call { build_isolation_call(operation, systems_hash) };
-  std::string result { exec_and_capture(isolation_call) };
-  result.pop_back();
+  std::string result {};
+  auto        lookup_it { operation.feature_expression_lookup.find(
+      canonical_systems_key(systems)) };
+  if (lookup_it != operation.feature_expression_lookup.end())
+  {
+    result = lookup_it->second;
+  }
+  else
+  {
+    std::string isolation_call { build_isolation_call(operation,
+                                                      systems_hash) };
+    result = exec_and_capture(isolation_call);
+    result.pop_back();
+  }
 
   {
     std::lock_guard lock { cache_mutex };
@@ -811,8 +910,7 @@ void analyze(operation_t op)
     }
 
     std::map<const node_t *, size_t> method_fqn_len_cache {};
-    auto score_of
-        = [&](const std::shared_ptr<node_t> &node) -> size_t
+    auto score_of = [&](const std::shared_ptr<node_t> &node) -> size_t
     {
       auto method_node { get_parent_method_node(node) };
       if (method_node == nullptr)
@@ -876,9 +974,8 @@ void analyze(operation_t op)
 
     for (auto &[feat, nodes] : nodes_by_feature)
     {
-      output_lines_t lines {
-        build_argouml_benchmark_format_for_file(nodes, all_roots, feat)
-      };
+      output_lines_t  lines { build_argouml_benchmark_format_for_file(
+          nodes, all_roots, feat) };
       std::lock_guard lock { accumulator_mutex };
       accumulator[feat].insert_many(lines);
     }

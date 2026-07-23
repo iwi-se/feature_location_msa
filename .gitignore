@@ -1,8 +1,11 @@
 
 **/build/
 **/build-debug/
+compile_commands.json
 
 input/
 output/
 dashboard/.venv/
 dashboard/__pycache__/
+
+.cache/
