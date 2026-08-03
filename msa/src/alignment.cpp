@@ -182,13 +182,12 @@ double ancestorSimilarity(std::shared_ptr<node_t>             n1,
   }
 
   auto   n1Orig { n1 };
-  double result {};
+  double result { 1.0 };
   double level { 1 };
   if (n1->get_parent()->get_tag() != n2->get_parent()->get_tag())
   {
     result += std::pow(
-        static_cast<double>(calculateCommonAncestorProximity(n1, n2, cache))
-            + 1.0,
+        static_cast<double>(calculateCommonAncestorProximity(n1, n2, cache)),
         -2);
   }
   else
@@ -233,7 +232,7 @@ enum class refinement_stop_mode
   no_change
 };
 constexpr refinement_stop_mode kRefinementStopMode {
-  refinement_stop_mode::no_change
+  refinement_stop_mode::score_based
 };
 
 double score(const alignment_token&              a,
@@ -266,7 +265,8 @@ double score(const alignment_token&              a,
     {
       if (a_rep->get_subtree_hash() == b_rep->get_subtree_hash())
       {
-        double s  = ancestorSimilarity(a_rep, b_rep, hashCount, cache);
+        // double s  = ancestorSimilarity(a_rep, b_rep, hashCount, cache);
+        double s  = contextSimilarity(a_rep, b_rep, hashCount, cache);
         best      = std::max(best, s);
         worst     = std::min(worst, s);
         sum      += s;
@@ -681,40 +681,39 @@ void align_file_variants(std::vector<file_variant>& variants,
   {
     current_score = compute_alignment_score(variants, hash_count, cache);
   }
-  // for (size_t iteration {}; iteration < kMaxRefinementIterations;
-  // ++iteration)
-  // {
-  //   auto snapshot { snapshot_token_tables(variants) };
-  //
-  //   refine_alignment(variants, hash_count, cache);
-  //
-  //   if constexpr (kRefinementStopMode == refinement_stop_mode::no_change)
-  //   {
-  //     bool changed { false };
-  //     for (size_t i {}; i < variants.size(); ++i)
-  //     {
-  //       if (*variants[i].m_token_table != snapshot[i])
-  //       {
-  //         changed = true;
-  //         break;
-  //       }
-  //     }
-  //     if (!changed)
-  //     {
-  //       break;
-  //     }
-  //   }
-  //   else
-  //   {
-  //     double new_score { compute_alignment_score(variants, hash_count, cache)
-  //     }; if (new_score <= current_score)
-  //     {
-  //       restore_token_tables(variants, snapshot);
-  //       break;
-  //     }
-  //     current_score = new_score;
-  //   }
-  // }
+  for (size_t iteration {}; iteration < kMaxRefinementIterations; ++iteration)
+  {
+    auto snapshot { snapshot_token_tables(variants) };
+
+    refine_alignment(variants, hash_count, cache);
+
+    if constexpr (kRefinementStopMode == refinement_stop_mode::no_change)
+    {
+      bool changed { false };
+      for (size_t i {}; i < variants.size(); ++i)
+      {
+        if (*variants[i].m_token_table != snapshot[i])
+        {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed)
+      {
+        break;
+      }
+    }
+    else
+    {
+      double new_score { compute_alignment_score(variants, hash_count, cache) };
+      if (new_score <= current_score)
+      {
+        restore_token_tables(variants, snapshot);
+        break;
+      }
+      current_score = new_score;
+    }
+  }
 }
 
 token_table extract_non_filler_tokens(const token_table& sequence)
@@ -786,11 +785,16 @@ void refine_alignment(std::vector<file_variant>&          variants,
       seq.reserve(merged.size());
     }
 
+    size_t merged_idx {};
     for (size_t pos {}; pos < keep_column.size(); ++pos)
     {
       if (keep_column[pos])
       {
-        reduced_profile.push_back(merged[pos]);
+        // merge_aligned_sequences() already skips all-filler columns
+        // entirely (it never inserts a placeholder for them), so `merged`
+        // is indexed by kept-column count, not by raw column position.
+        reduced_profile.push_back(merged[merged_idx]);
+        ++merged_idx;
         for (size_t seq_idx {}; seq_idx < other_sequences.size(); ++seq_idx)
         {
           compacted_others[seq_idx].push_back((*other_sequences[seq_idx])[pos]);
