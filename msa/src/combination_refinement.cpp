@@ -58,6 +58,19 @@ namespace
     return key;
   }
 
+  size_t column_combination_size(const column_state &state)
+  {
+    size_t count {};
+    for (const auto &present : state.present)
+    {
+      if (present)
+      {
+        count++;
+      }
+    }
+    return count;
+  }
+
   bool is_all_filler(const combination_key &key)
   {
     return key.find('1') == std::string::npos;
@@ -82,12 +95,13 @@ namespace
   // anchor_present, capped to kMaxCombinationMismatches.
   std::vector<combination_key> wanted_targets(
       const std::unordered_map<combination_key, size_t> &combination_counts,
-      const std::vector<bool>                           &anchor_present)
+      const std::vector<bool>                           &anchor_present,
+      const size_t &threshold = kRarityThreshold)
   {
     std::vector<std::pair<size_t, combination_key>> scored;
     for (auto &[key, count] : combination_counts)
     {
-      if (count < kRarityThreshold)
+      if (count < threshold)
       {
         continue; // not "wanted"
       }
@@ -365,6 +379,10 @@ namespace
           score -= 1;
         }
       }
+      else
+      {
+        score += 1;
+      }
     };
 
     for (size_t c : affected)
@@ -548,7 +566,8 @@ namespace
         }
 
         auto targets { wanted_targets(combination_counts,
-                                      anchor_state.present) };
+                                      anchor_state.present,
+                                      column_combination_size(anchor_state)) };
 
         bool            best_found { false };
         scenario_result best;
