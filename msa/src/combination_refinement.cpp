@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <sstream>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -20,6 +21,13 @@ namespace
   // file.
   constexpr size_t kMaxCombinationMismatches = 100;
   constexpr size_t kMaxScenarios             = 10'0000;
+  // Dominates any other scenario's score outright: per-column deltas from
+  // score_transition are bounded to +-1 and the number of affected columns
+  // is bounded by the row count, so this margin guarantees a scenario that
+  // fully dissolves the rare anchor column is always preferred, even if it
+  // has minor negative side effects elsewhere (e.g. leaves some other
+  // column rare).
+  constexpr int kDissolveBonus = 10'0000;
 
   struct column_state
   {
@@ -390,6 +398,12 @@ namespace
       score_transition(before[c], after[c]);
     }
 
+    if (auto it { after.find(anchor) };
+        it != after.end() && is_all_filler(key_from_state(it->second)))
+    {
+      score += kDissolveBonus;
+    }
+
     result.feasible = true;
     result.score    = score;
     result.moves    = moves;
@@ -568,6 +582,12 @@ namespace
         auto targets { wanted_targets(combination_counts,
                                       anchor_state.present,
                                       column_combination_size(anchor_state)) };
+
+        // Also try resolving the rare column by pushing it out entirely,
+        // leaving it all-filler. All-filler columns are dropped later,
+        // shortening the alignment, so evaluate_scenario awards this a
+        // dominant score whenever it's reachable.
+        targets.push_back(combination_key(rows, '0'));
 
         bool            best_found { false };
         scenario_result best;
@@ -805,6 +825,14 @@ void refine_rare_combinations(std::vector<file_variant> &variants)
 
   consider(winner_t::forward, forward_rare, forward_combos);
   consider(winner_t::backward, backward_rare, backward_combos);
+
+  log_event("[combination refinement] Scores: before_rare: "
+            + std::to_string(before_rare)
+            + ", before_combos: " + std::to_string(before_combos)
+            + ", forward_rare: " + std::to_string(forward_rare)
+            + ", forward_combos: " + std::to_string(forward_combos)
+            + ", backward_rare: " + std::to_string(backward_rare)
+            + ", backward_combos: " + std::to_string(backward_combos));
 
   switch (winner)
   {
