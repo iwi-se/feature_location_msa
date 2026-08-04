@@ -5,7 +5,6 @@
 #include "event_sink.hpp"
 #include "events.hpp"
 #include "file_discovery.hpp"
-#include "guide_tree.hpp"
 #include "helper.hpp"
 #include "output.hpp"
 #include "postprocessing.hpp"
@@ -83,14 +82,10 @@ int main(int argc, char* argv[])
             calculate_ngram_hashes(file_family.variants, options);
           }
 
-          // build_guide_tree(file_family, options);
-          // print_guide_tree(*file_family.m_guide_tree, file_family);
-
           {
             stage_timer t(pipeline_stage::align_file_variants);
             align_file_variants(file_family.variants, options);
           }
-          // align_guide_tree(file_family, options);
 
           {
             stage_timer t(pipeline_stage::refine_rare_combinations);

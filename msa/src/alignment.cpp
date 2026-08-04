@@ -6,11 +6,13 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <sstream>
 #include <utility>
 
 size_t find_most_similar_element(
@@ -19,14 +21,14 @@ size_t find_most_similar_element(
                             hashed_ngrams,
     const std::set<size_t>& ignore_indices)
 {
-  size_t max_common {};
+  double max_common {};
   size_t max_index {};
 
   for (size_t i {}; i < hashed_ngrams.size(); ++i)
   {
     if (!ignore_indices.contains(i))
     {
-      size_t common = count_common_ngrams(source, hashed_ngrams[i]);
+      double common = file_similarity(source, hashed_ngrams[i]);
       if (common > max_common)
       {
         max_common = common;
@@ -71,6 +73,19 @@ size_t scoreLcsCount(const std::set<size_t>& lcs, const hash_count& hash_count)
         += hash_count.max + 1 - std::min(hash_count.m.at(tok), hash_count.max);
   }
   return score;
+}
+
+// Same rarity weighting as scoreLcsCount's per-token term, for a single
+// subtree hash: rarer tokens (lower corpus-wide count) score higher, common/
+// boilerplate tokens score lower. Falls back to a count of 0 (max weight) if
+// the hash wasn't seen while building hash_count (shouldn't normally happen
+// for a real token, but avoids an out_of_range throw either way).
+double token_rarity_weight(size_t hash, const hash_count& hash_count)
+{
+  auto   it { hash_count.m.find(hash) };
+  size_t count { it != hash_count.m.end() ? it->second : 0 };
+  return static_cast<double>(hash_count.max + 1
+                             - std::min(count, hash_count.max));
 }
 
 constexpr size_t kAncestorProximitySalt { 0x9E37'79B9'7F4A'7C15ULL };
@@ -212,8 +227,72 @@ double ancestorSimilarity(std::shared_ptr<node_t>             n1,
   return result;
 }
 
-// Experimentation flag: how to combine scores across multiple representative
-// pairs in a column (see alignment_token::alternates).
+constexpr size_t kMaxContextDistance { 10 };
+
+// Scores how similar the immediate context of two candidate tokens is:
+// `row_table[row_pos]` and `candidate_table[candidate_pos]` are the two
+// tokens being compared (already known to match, per score_column's caller);
+// this walks up to kMaxContextDistance steps backward and forward from them,
+// and for each step where both sides' token shares the same subtree_hash,
+// adds that token's rarity weight (see token_rarity_weight - rarer tokens
+// count for more, common/boilerplate tokens count for less), stopping at
+// the first mismatch (a FILLER never matches) in each direction. Returns an
+// unnormalized score.
+double contextSimilarity(const token_table& row_table,
+                         size_t             row_pos,
+                         const token_table& candidate_table,
+                         size_t             candidate_pos,
+                         const hash_count&  hashCount)
+{
+  double score {};
+
+  long a { static_cast<long>(row_pos) - 1 };
+  long b { static_cast<long>(candidate_pos) - 1 };
+  for (size_t step {}; step < kMaxContextDistance && a >= 0 && b >= 0; ++step)
+  {
+    const auto& ta { row_table[static_cast<size_t>(a)] };
+    const auto& tb { candidate_table[static_cast<size_t>(b)] };
+    if (ta.is_filler() || tb.is_filler())
+    {
+      break;
+    }
+    size_t hash { ta.node->get_subtree_hash() };
+    if (hash != tb.node->get_subtree_hash())
+    {
+      break;
+    }
+    score += token_rarity_weight(hash, hashCount);
+    --a;
+    --b;
+  }
+
+  size_t fa { row_pos + 1 };
+  size_t fb { candidate_pos + 1 };
+  for (size_t step {}; step < kMaxContextDistance && fa < row_table.size()
+                       && fb < candidate_table.size();
+       ++step)
+  {
+    const auto& ta { row_table[fa] };
+    const auto& tb { candidate_table[fb] };
+    if (ta.is_filler() || tb.is_filler())
+    {
+      break;
+    }
+    size_t hash { ta.node->get_subtree_hash() };
+    if (hash != tb.node->get_subtree_hash())
+    {
+      break;
+    }
+    score += token_rarity_weight(hash, hashCount);
+    ++fa;
+    ++fb;
+  }
+
+  return score;
+}
+
+// Experimentation flag: how to combine scores across multiple profile rows
+// in a column (see score_column).
 enum class column_score_mode
 {
   best,
@@ -235,49 +314,132 @@ constexpr refinement_stop_mode kRefinementStopMode {
   refinement_stop_mode::score_based
 };
 
-double score(const alignment_token&              a,
-             const alignment_token&              b,
-             const hash_count&                   hashCount,
-             std::unordered_map<size_t, double>& cache)
+// One distinct non-filler subtree hash seen in a profile column, plus the
+// row indices (into whatever `column` vector this index was built from)
+// that carry it.
+struct column_hash_group
 {
-  if (a.token_kind == alignment_token::token_kind::filler
-      || b.token_kind == alignment_token::token_kind::filler)
+    size_t              hash {};
+    std::vector<size_t> rows {};
+};
+
+// Groups a profile column's non-filler tokens by exact subtree_hash equality
+// via a small linear-scan build, mirroring how the old ancestor-fingerprint
+// merge/dedup grouped column reps (a plain vector, no heap-allocating hash
+// map) - the number of distinct shapes in a column is normally tiny, so this
+// beats an unordered_map in practice despite being O(rows * groups) to
+// build. Scoring only ever needs rows whose hash equals the candidate's, so
+// building this once per column (rather than rescanning per DP cell) turns
+// each score_column() call into an O(matches) lookup instead of an O(rows)
+// scan.
+std::vector<column_hash_group>
+    build_column_hash_index(const std::vector<const alignment_token*>& column)
+{
+  std::vector<column_hash_group> groups;
+  for (size_t i {}; i < column.size(); ++i)
+  {
+    if (column[i]->token_kind == alignment_token::token_kind::filler)
+    {
+      continue;
+    }
+    size_t hash { column[i]->node->get_subtree_hash() };
+    bool   found { false };
+    for (auto& group : groups)
+    {
+      if (group.hash == hash)
+      {
+        group.rows.push_back(i);
+        found = true;
+        break;
+      }
+    }
+    if (!found)
+    {
+      groups.push_back({ hash, { i } });
+    }
+  }
+  return groups;
+}
+
+// Scores `candidate` against a profile column's tokens, using a precomputed
+// hash_index (see build_column_hash_index) to find only the rows that can
+// possibly match, without ever materializing a merged pseudo-token.
+// `exclude_index`, if set, skips that row (used by compute_alignment_score
+// for leave-one-out scoring). `row_tables`/`column_pos` and
+// `candidate_table`/`candidate_pos` locate `column`'s rows and `candidate`
+// within their real token_table + position, so the match score can consult
+// each side's neighboring tokens (see contextSimilarity).
+double score_column(const std::vector<column_hash_group>&      hash_index,
+                    const std::vector<const alignment_token*>& column,
+                    const std::vector<token_table*>&           row_tables,
+                    size_t                                     column_pos,
+                    std::optional<size_t>                      exclude_index,
+                    const alignment_token&                     candidate,
+                    const token_table&                         candidate_table,
+                    size_t                                     candidate_pos,
+                    const hash_count&                          hashCount,
+                    std::unordered_map<size_t, double>&        cache)
+{
+  if (candidate.token_kind == alignment_token::token_kind::filler)
   {
     return -100.0;
   }
 
-  // Evaluate every representative of `a` against every representative of
-  // `b` (primary `node` plus any `alternates` from a merged profile column).
-  // In the common non-profile case both `alternates` are empty, so this
-  // reduces to exactly one comparison either way.
-  auto a_reps = std::vector<std::shared_ptr<node_t>> { a.node };
-  a_reps.insert(a_reps.end(), a.alternates.begin(), a.alternates.end());
-  auto b_reps = std::vector<std::shared_ptr<node_t>> { b.node };
-  b_reps.insert(b_reps.end(), b.alternates.begin(), b.alternates.end());
+  size_t                     target_hash { candidate.node->get_subtree_hash() };
+  const std::vector<size_t>* rows { nullptr };
+  for (const auto& group : hash_index)
+  {
+    if (group.hash == target_hash)
+    {
+      rows = &group.rows;
+      break;
+    }
+  }
+  if (rows == nullptr)
+  {
+    return -100.0;
+  }
+
+  // Leave-one-out normally skips `exclude_index`, but if that row is the
+  // *only* one carrying this hash (a token genuinely unique to it - common
+  // for variant-specific code), skipping it would leave nothing to compare
+  // against and wrongly score legitimately unique code as a total mismatch.
+  // Fall back to comparing it against itself in that case, matching what
+  // scoring against the full (self-inclusive) profile always did.
+  bool skip_exclusion { exclude_index.has_value() && rows->size() == 1
+                        && (*rows)[0] == *exclude_index };
 
   double worst { std::numeric_limits<double>::max() };
   double best { -100.0 };
   double sum { 0.0 };
   size_t matches { 0 };
-  for (const auto& a_rep : a_reps)
+  for (size_t row : *rows)
   {
-    for (const auto& b_rep : b_reps)
+    if (!skip_exclusion && exclude_index.has_value() && row == *exclude_index)
     {
-      if (a_rep->get_subtree_hash() == b_rep->get_subtree_hash())
-      {
-        // double s  = ancestorSimilarity(a_rep, b_rep, hashCount, cache);
-        double s  = contextSimilarity(a_rep, b_rep, hashCount, cache);
-        best      = std::max(best, s);
-        worst     = std::min(worst, s);
-        sum      += s;
-        ++matches;
-      }
+      continue;
     }
+    double s { ancestorSimilarity(
+        column[row]->node, candidate.node, hashCount, cache) };
+    // Experimental: context-based scoring plugged in here in place of
+    // ancestorSimilarity - see contextSimilarity above.
+    // double s { contextSimilarity(*row_tables[row],
+    //                             column_pos,
+    //                             candidate_table,
+    //                             candidate_pos,
+    //                             hashCount)
+    //};
+    best   = std::max(best, s);
+    worst  = std::min(worst, s);
+    sum   += s;
+    ++matches;
   }
+
   if (matches == 0)
   {
     return -100.0;
   }
+
   switch (kColumnScoreMode)
   {
     case column_score_mode::best :
@@ -287,6 +449,7 @@ double score(const alignment_token&              a,
     case column_score_mode::average :
       return sum / static_cast<double>(matches);
   }
+
   return sum / static_cast<double>(matches);
 }
 
@@ -298,260 +461,223 @@ std::pair<size_t, size_t> calculate_l_range(size_t k, size_t len1, size_t len2)
   return { l_begin, l_end };
 }
 
-void align_pairwise(std::vector<alignment_token>&       seq1,
-                    std::vector<alignment_token>&       seq2,
-                    const hash_count&                   hashCount,
-                    std::unordered_map<size_t, double>& cache)
+// Builds a plain (non-profile) representative token_table out of a profile,
+// picking each column's first non-filler row (skipping all-filler columns
+// entirely). Used both for the n-gram similarity lookup and as the cheap
+// content-equality check in align_profile_to_sequence.
+token_table
+    build_consensus_sequence(const std::vector<token_table*>& profile_rows)
 {
-  if (seq1 == seq2)
+  token_table consensus {};
+  if (profile_rows.empty())
+  {
+    return consensus;
+  }
+
+  size_t length { profile_rows[0]->size() };
+  consensus.reserve(length);
+  for (size_t pos {}; pos < length; ++pos)
+  {
+    for (auto* row : profile_rows)
+    {
+      const auto& tok { (*row)[pos] };
+      if (!tok.is_filler())
+      {
+        consensus.push_back(tok);
+        break;
+      }
+    }
+  }
+  return consensus;
+}
+
+// Aligns a profile (multiple already column-aligned rows, each possibly
+// containing FILLER) against a single new `sequence`, column by column.
+// Mutates every row pointed to by `profile_rows` and `sequence` in place so
+// they all end up the same, gap-extended length. A lone file is just a
+// 1-row profile, so this also covers plain file-vs-file alignment.
+void align_profile_to_sequence(const std::vector<token_table*>&    profile_rows,
+                               token_table&                        sequence,
+                               const hash_count&                   hash_count,
+                               std::unordered_map<size_t, double>& cache)
+{
+  if (profile_rows.empty())
   {
     return;
   }
-  else
+
+  // Cheap content-equality shortcut, mirroring the old align_pairwise's
+  // `seq1 == seq2` check (there, seq1 was always the merged/deduped
+  // profile). Skips the whole O(n*m) DP whenever re-aligning would be a
+  // no-op - which is the common case once a profile has converged, e.g. on
+  // later passes of the iterative refinement loop.
+  if (build_consensus_sequence(profile_rows) == sequence)
   {
-    size_t len1 = seq1.size();
-    size_t len2 = seq2.size();
-
-    std::vector<std::vector<double>> dp(len1 + 1,
-                                        std::vector<double>(len2 + 1, 0));
-
-    for (size_t k = 1; k <= len1; ++k)
-    {
-      std::pair<size_t, size_t> l_range;
-      if (std::abs(1.0
-                   - (static_cast<double>(seq1.size())
-                      / static_cast<double>(seq2.size())))
-          < 0.2)
-      {
-        l_range = calculate_l_range(k, len1, len2);
-      }
-      else
-      {
-        l_range = { 1, len2 };
-      }
-
-      for (size_t l = l_range.first; l <= l_range.second; ++l)
-      {
-        double matchScore = dp[k - 1][l - 1]
-                            + score(seq1[k - 1], seq2[l - 1], hashCount, cache);
-        double deleteScore = dp[k - 1][l];
-        double insertScore = dp[k][l - 1];
-
-        dp[k][l] = std::max({ matchScore, deleteScore, insertScore });
-      }
-    }
-
-    size_t                       max_len { seq1.size() + seq2.size() };
-    std::vector<alignment_token> alignedSeq1(max_len);
-    std::vector<alignment_token> alignedSeq2(max_len);
-
-    size_t k { len1 };
-    size_t l { len2 };
-    size_t m { max_len };
-
-    while (k > 0 || l > 0)
-    {
-      --m;
-      if (k > 0 && l > 0
-          && dp[k][l]
-                 == dp[k - 1][l - 1]
-                        + score(seq1[k - 1], seq2[l - 1], hashCount, cache))
-      {
-        alignedSeq1[m] = seq1[k - 1];
-        alignedSeq2[m] = seq2[l - 1];
-        --k;
-        --l;
-      }
-      else if (k > 0 && dp[k][l] == dp[k - 1][l])
-      {
-        alignedSeq1[m] = seq1[k - 1];
-        alignedSeq2[m] = FILLER;
-        --k;
-      }
-      else if (l > 0 && dp[k][l] == dp[k][l - 1])
-      {
-        alignedSeq1[m] = FILLER;
-        alignedSeq2[m] = seq2[l - 1];
-        --l;
-      }
-    }
-
-    std::move(alignedSeq1.begin() + m, alignedSeq1.end(), alignedSeq1.begin());
-    alignedSeq1.resize(alignedSeq1.size() - m);
-
-    std::move(alignedSeq2.begin() + m, alignedSeq2.end(), alignedSeq2.begin());
-    alignedSeq2.resize(alignedSeq2.size() - m);
-
-    seq1 = std::move(alignedSeq1);
-    seq2 = std::move(alignedSeq2);
+    return;
   }
+
+  size_t n { profile_rows[0]->size() };
+  size_t m { sequence.size() };
+
+  // Precompute the column-token view and hash index for each profile column
+  // once; reused across every candidate sequence position in the DP fill and
+  // backtrack.
+  std::vector<std::vector<const alignment_token*>> columns(n);
+  std::vector<std::vector<column_hash_group>>      column_hash_indices(n);
+  for (size_t k {}; k < n; ++k)
+  {
+    columns[k].reserve(profile_rows.size());
+    for (auto* row : profile_rows)
+    {
+      columns[k].push_back(&(*row)[k]);
+    }
+    column_hash_indices[k] = build_column_hash_index(columns[k]);
+  }
+
+  auto match_score = [&](size_t k, size_t l)
+  {
+    return score_column(column_hash_indices[k - 1],
+                        columns[k - 1],
+                        profile_rows,
+                        k - 1,
+                        std::nullopt,
+                        sequence[l - 1],
+                        sequence,
+                        l - 1,
+                        hash_count,
+                        cache);
+  };
+
+  std::vector<std::vector<double>> dp(n + 1, std::vector<double>(m + 1, 0));
+
+  for (size_t k = 1; k <= n; ++k)
+  {
+    std::pair<size_t, size_t> l_range;
+    if (std::abs(1.0 - (static_cast<double>(n) / static_cast<double>(m))) < 0.2)
+    {
+      l_range = calculate_l_range(k, n, m);
+    }
+    else
+    {
+      l_range = { 1, m };
+    }
+
+    for (size_t l = l_range.first; l <= l_range.second; ++l)
+    {
+      double matchScore  = dp[k - 1][l - 1] + match_score(k, l);
+      double deleteScore = dp[k - 1][l];
+      double insertScore = dp[k][l - 1];
+
+      dp[k][l] = std::max({ matchScore, deleteScore, insertScore });
+    }
+  }
+
+  size_t                   max_len { n + m };
+  std::vector<token_table> aligned_rows(profile_rows.size(),
+                                        token_table(max_len));
+  token_table              aligned_sequence(max_len);
+
+  size_t k { n };
+  size_t l { m };
+  size_t pos { max_len };
+
+  while (k > 0 || l > 0)
+  {
+    --pos;
+    if (k > 0 && l > 0 && dp[k][l] == dp[k - 1][l - 1] + match_score(k, l))
+    {
+      for (size_t r {}; r < profile_rows.size(); ++r)
+      {
+        aligned_rows[r][pos] = (*profile_rows[r])[k - 1];
+      }
+      aligned_sequence[pos] = sequence[l - 1];
+      --k;
+      --l;
+    }
+    else if (k > 0 && dp[k][l] == dp[k - 1][l])
+    {
+      for (size_t r {}; r < profile_rows.size(); ++r)
+      {
+        aligned_rows[r][pos] = (*profile_rows[r])[k - 1];
+      }
+      aligned_sequence[pos] = FILLER;
+      --k;
+    }
+    else if (l > 0 && dp[k][l] == dp[k][l - 1])
+    {
+      for (size_t r {}; r < profile_rows.size(); ++r)
+      {
+        aligned_rows[r][pos] = FILLER;
+      }
+      aligned_sequence[pos] = sequence[l - 1];
+      --l;
+    }
+  }
+
+  for (size_t r {}; r < profile_rows.size(); ++r)
+  {
+    std::move(aligned_rows[r].begin() + pos,
+              aligned_rows[r].end(),
+              aligned_rows[r].begin());
+    aligned_rows[r].resize(aligned_rows[r].size() - pos);
+    *profile_rows[r] = std::move(aligned_rows[r]);
+  }
+
+  std::move(aligned_sequence.begin() + pos,
+            aligned_sequence.end(),
+            aligned_sequence.begin());
+  aligned_sequence.resize(aligned_sequence.size() - pos);
+  sequence = std::move(aligned_sequence);
 }
 
-struct ancestor_fingerprint
-{
-    std::string           parent_tag;
-    std::array<size_t, 4> ancestor_hashes {};
-    size_t                depth_reached {};
-
-    bool operator== (const ancestor_fingerprint&) const = default;
-};
-
-// Captures exactly what ancestorSimilarity() consults about a node's
-// ancestor chain (the branch-selecting parent tag, plus the ancestor
-// subtree hashes fed into the memoized subtreeSimilarity() climb up to
-// 4 levels). Two nodes with equal fingerprints are guaranteed to produce
-// identical ancestorSimilarity() scores against any given candidate, as
-// long as both end up on the "parent tags match" branch (checked by the
-// caller via parent_tag equality before trusting a fingerprint match).
-std::optional<ancestor_fingerprint>
-    compute_ancestor_fingerprint(const std::shared_ptr<node_t>& n)
-{
-  if (n == nullptr || n->get_parent() == nullptr)
-  {
-    return std::nullopt;
-  }
-
-  ancestor_fingerprint fp {};
-  fp.parent_tag = n->get_parent()->get_tag();
-
-  auto n1 { n };
-  for (size_t level {}; level < 4; ++level)
-  {
-    n1 = n1->get_parent();
-    if (n1 == nullptr)
-    {
-      break;
-    }
-    fp.ancestor_hashes[level] = n1->get_subtree_hash();
-    fp.depth_reached          = level + 1;
-    if (n1->get_parent() == nullptr)
-    {
-      break;
-    }
-  }
-  return fp;
-}
-
-std::vector<alignment_token> merge_aligned_sequences(
-    const std::vector<std::vector<alignment_token>*>& sequences)
-{
-  if (sequences.empty())
-  {
-    return {};
-  }
-
-  size_t num_sequences = sequences.size();
-  size_t length        = sequences[0]->size();
-
-  // Ensure all sequences are the same length
-  for (const auto& seq : sequences)
-  {
-    if (seq->size() != length)
-    {
-      throw std::invalid_argument("All sequences must have the same length");
-    }
-  }
-
-  std::vector<alignment_token> merged;
-  merged.reserve(length);
-
-  // Iterate column by column
-  for (size_t pos = 0; pos < length; ++pos)
-  {
-    std::vector<std::shared_ptr<node_t>>             reps;
-    std::vector<std::optional<ancestor_fingerprint>> rep_fingerprints;
-
-    for (size_t seq_idx = 0; seq_idx < num_sequences; ++seq_idx)
-    {
-      const auto& token { (*sequences[seq_idx])[pos] };
-      if (token.is_filler())
-      {
-        continue;
-      }
-
-      auto fp { compute_ancestor_fingerprint(token.node) };
-      bool merged_into_existing { false };
-      if (fp.has_value())
-      {
-        for (size_t r {}; r < reps.size(); ++r)
-        {
-          if (rep_fingerprints[r].has_value() && *rep_fingerprints[r] == *fp)
-          {
-            merged_into_existing = true;
-            break;
-          }
-        }
-      }
-
-      if (!merged_into_existing)
-      {
-        reps.push_back(token.node);
-        rep_fingerprints.push_back(fp);
-      }
-    }
-
-    if (!reps.empty())
-    {
-      alignment_token merged_tok { alignment_token::token_kind::node,
-                                   reps.front() };
-      if (reps.size() > 1)
-      {
-        merged_tok.alternates.assign(reps.begin() + 1, reps.end());
-      }
-      merged.push_back(std::move(merged_tok));
-    }
-  }
-
-  return merged;
-}
-
-void realign_aligned_sequence(
-    std::vector<std::vector<alignment_token>*>& aligned_sequences,
-    const std::vector<alignment_token>&         merged_sequence)
-{
-  for (auto sequence : aligned_sequences)
-  {
-    std::vector<alignment_token> realigned_sequence {};
-    realigned_sequence.reserve(merged_sequence.size());
-    size_t k {};
-    for (size_t i {}; i < merged_sequence.size(); ++i)
-    {
-      if (merged_sequence[i].is_filler())
-      {
-        realigned_sequence.push_back(FILLER);
-      }
-      else
-      {
-        realigned_sequence.push_back((*sequence)[k]);
-        ++k;
-      }
-    }
-    *sequence = std::move(realigned_sequence);
-  }
-}
-
-// Total alignment quality across all variants: builds the consensus profile
-// and sums score() of every variant's token against the profile at that
-// column. Used as the convergence measure for iterative refinement.
+// Total alignment quality across all variants: for each column, scores
+// every row's non-filler token against the *other* rows at that column
+// (leave-one-out), summed over every column and row. Used as the
+// convergence measure for iterative refinement.
 double compute_alignment_score(std::vector<file_variant>&          variants,
                                const hash_count&                   hash_count,
                                std::unordered_map<size_t, double>& cache)
 {
-  std::vector<std::vector<alignment_token>*> all_sequences;
+  std::vector<token_table*> all_sequences;
   all_sequences.reserve(variants.size());
   for (auto& variant : variants)
   {
     all_sequences.push_back(&(*variant.m_token_table));
   }
 
-  auto profile { merge_aligned_sequences(all_sequences) };
-
-  double total {};
-  for (auto* sequence : all_sequences)
+  if (all_sequences.empty())
   {
-    for (size_t pos {}; pos < profile.size(); ++pos)
+    return 0.0;
+  }
+
+  size_t length { all_sequences[0]->size() };
+  double total {};
+  for (size_t pos {}; pos < length; ++pos)
+  {
+    std::vector<const alignment_token*> column;
+    column.reserve(all_sequences.size());
+    for (auto* sequence : all_sequences)
     {
-      total += score(profile[pos], (*sequence)[pos], hash_count, cache);
+      column.push_back(&(*sequence)[pos]);
+    }
+    auto hash_index { build_column_hash_index(column) };
+
+    for (size_t r {}; r < column.size(); ++r)
+    {
+      if (column[r]->is_filler())
+      {
+        continue;
+      }
+      total += score_column(hash_index,
+                            column,
+                            all_sequences,
+                            pos,
+                            r,
+                            *column[r],
+                            *all_sequences[r],
+                            pos,
+                            hash_count,
+                            cache);
     }
   }
   return total;
@@ -621,16 +747,16 @@ void align_file_variants(std::vector<file_variant>& variants,
     size_t seed_first { distinct_indices[seed_local_pair.first] };
     size_t seed_second { distinct_indices[seed_local_pair.second] };
 
-    align_pairwise(*variants[seed_first].m_token_table,
-                   *variants[seed_second].m_token_table,
-                   hash_count,
-                   cache);
+    align_profile_to_sequence({ &(*variants[seed_first].m_token_table) },
+                              *variants[seed_second].m_token_table,
+                              hash_count,
+                              cache);
     ++completed_alignments;
     report_progress(pipeline_stage::align_file_variants,
                     completed_alignments,
                     total_alignments);
 
-    std::vector<std::vector<alignment_token>*> aligned_sequences {
+    std::vector<token_table*> aligned_sequences {
       &(*variants[seed_first].m_token_table),
       &(*variants[seed_second].m_token_table)
     };
@@ -639,25 +765,23 @@ void align_file_variants(std::vector<file_variant>& variants,
 
     while (used_local_indices.size() < distinct_variant_count)
     {
-      auto   merged { merge_aligned_sequences(aligned_sequences) };
+      auto   consensus { build_consensus_sequence(aligned_sequences) };
       auto   merged_ngram_hashes { hash_ngrams(
-          calculate_ngrams(merged, options.n_gram_size)) };
+          calculate_ngrams(consensus, options.n_gram_size)) };
       size_t next_local_index { find_most_similar_element(
           merged_ngram_hashes, distinct_ngram_hashes, used_local_indices) };
       size_t next_variant_index { distinct_indices[next_local_index] };
 
-      align_pairwise(merged,
-                     *variants[next_variant_index].m_token_table,
-                     hash_count,
-                     cache);
+      align_profile_to_sequence(aligned_sequences,
+                                *variants[next_variant_index].m_token_table,
+                                hash_count,
+                                cache);
       ++completed_alignments;
       report_progress(pipeline_stage::align_file_variants,
                       completed_alignments,
                       total_alignments);
 
       used_local_indices.insert(next_local_index);
-
-      realign_aligned_sequence(aligned_sequences, merged);
 
       aligned_sequences.push_back(
           &(*variants[next_variant_index].m_token_table));
@@ -681,11 +805,19 @@ void align_file_variants(std::vector<file_variant>& variants,
   {
     current_score = compute_alignment_score(variants, hash_count, cache);
   }
+  size_t executed_iterations { 0 };
+  auto   refinement_start { std::chrono::steady_clock::now() };
   for (size_t iteration {}; iteration < kMaxRefinementIterations; ++iteration)
   {
+    auto pass_start { std::chrono::steady_clock::now() };
     auto snapshot { snapshot_token_tables(variants) };
 
     refine_alignment(variants, hash_count, cache);
+
+    ++executed_iterations;
+    auto pass_ms { std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - pass_start)
+                       .count() };
 
     if constexpr (kRefinementStopMode == refinement_stop_mode::no_change)
     {
@@ -698,6 +830,12 @@ void align_file_variants(std::vector<file_variant>& variants,
           break;
         }
       }
+      {
+        std::ostringstream msg;
+        msg << "[refine_debug] pass " << iteration << " took " << pass_ms
+            << "ms, changed=" << (changed ? "yes" : "no");
+        log_event(msg.str());
+      }
       if (!changed)
       {
         break;
@@ -706,6 +844,12 @@ void align_file_variants(std::vector<file_variant>& variants,
     else
     {
       double new_score { compute_alignment_score(variants, hash_count, cache) };
+      {
+        std::ostringstream msg;
+        msg << "[refine_debug] pass " << iteration << " took " << pass_ms
+            << "ms, score " << current_score << " -> " << new_score;
+        log_event(msg.str());
+      }
       if (new_score <= current_score)
       {
         restore_token_tables(variants, snapshot);
@@ -713,6 +857,16 @@ void align_file_variants(std::vector<file_variant>& variants,
       }
       current_score = new_score;
     }
+  }
+  {
+    auto total_ms { std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - refinement_start)
+                        .count() };
+    std::ostringstream msg;
+    msg << "[refine_debug] refinement loop finished after "
+        << executed_iterations << "/" << kMaxRefinementIterations
+        << " iterations, total " << total_ms << "ms";
+    log_event(msg.str());
   }
 }
 
@@ -772,29 +926,20 @@ void refine_alignment(std::vector<file_variant>&          variants,
       }
     }
 
-    auto merged { merge_aligned_sequences(other_sequences) };
     auto keep_column { find_non_empty_columns(other_sequences) };
 
-    // Compact the merged profile and every other variant to only the
-    // columns where at least one of the remaining variants has a token.
-    token_table reduced_profile {};
-    reduced_profile.reserve(merged.size());
+    // Compact every other variant to only the columns where at least one of
+    // the remaining variants has a token.
     std::vector<token_table> compacted_others(other_sequences.size());
     for (auto& seq : compacted_others)
     {
-      seq.reserve(merged.size());
+      seq.reserve(keep_column.size());
     }
 
-    size_t merged_idx {};
     for (size_t pos {}; pos < keep_column.size(); ++pos)
     {
       if (keep_column[pos])
       {
-        // merge_aligned_sequences() already skips all-filler columns
-        // entirely (it never inserts a placeholder for them), so `merged`
-        // is indexed by kept-column count, not by raw column position.
-        reduced_profile.push_back(merged[merged_idx]);
-        ++merged_idx;
         for (size_t seq_idx {}; seq_idx < other_sequences.size(); ++seq_idx)
         {
           compacted_others[seq_idx].push_back((*other_sequences[seq_idx])[pos]);
@@ -805,16 +950,15 @@ void refine_alignment(std::vector<file_variant>&          variants,
     auto original_tokens { extract_non_filler_tokens(
         *variants[i].m_token_table) };
 
-    align_pairwise(reduced_profile, original_tokens, hash_count, cache);
-
-    std::vector<std::vector<alignment_token>*> compacted_pointers {};
+    std::vector<token_table*> compacted_pointers {};
     compacted_pointers.reserve(compacted_others.size());
     for (auto& seq : compacted_others)
     {
       compacted_pointers.push_back(&seq);
     }
 
-    realign_aligned_sequence(compacted_pointers, reduced_profile);
+    align_profile_to_sequence(
+        compacted_pointers, original_tokens, hash_count, cache);
 
     for (size_t seq_idx {}; seq_idx < other_sequences.size(); ++seq_idx)
     {
@@ -823,69 +967,4 @@ void refine_alignment(std::vector<file_variant>&          variants,
 
     *variants[i].m_token_table = std::move(original_tokens);
   }
-}
-
-std::vector<std::vector<alignment_token>*>
-    align_guide_tree_node(guide_tree_node&                    node,
-                          file_family&                        family,
-                          const hash_count&                   hash_count,
-                          std::unordered_map<size_t, double>& cache)
-{
-  //
-  // Leaf
-  //
-  if (node.is_leaf())
-  {
-    return { &(*family.variants[node.variant_index.value()].m_token_table) };
-  }
-
-  //
-  // Recursively align children first
-  //
-  auto left_sequences
-      = align_guide_tree_node(*node.left, family, hash_count, cache);
-
-  auto right_sequences
-      = align_guide_tree_node(*node.right, family, hash_count, cache);
-
-  //
-  // Build profiles for both subtrees
-  //
-  auto left_profile = merge_aligned_sequences(left_sequences);
-
-  auto right_profile = merge_aligned_sequences(right_sequences);
-
-  //
-  // Align the profiles
-  //
-  align_pairwise(left_profile, right_profile, hash_count, cache);
-
-  //
-  // Push gaps back into descendants
-  //
-  realign_aligned_sequence(left_sequences, left_profile);
-
-  realign_aligned_sequence(right_sequences, right_profile);
-
-  //
-  // Return all sequences belonging to this subtree
-  //
-  left_sequences.insert(
-      left_sequences.end(), right_sequences.begin(), right_sequences.end());
-
-  return left_sequences;
-}
-
-void align_guide_tree(file_family& family, const options& options)
-{
-  if (!family.m_guide_tree.has_value() || !family.m_guide_tree->root)
-  {
-    return;
-  }
-
-  auto hash_count = build_hash_count(family.variants);
-
-  std::unordered_map<size_t, double> cache {};
-
-  align_guide_tree_node(*family.m_guide_tree->root, family, hash_count, cache);
 }

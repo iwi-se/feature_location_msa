@@ -7,7 +7,8 @@ void print_token_vector(const std::vector<alignment_token>& vec);
 size_t count_common_ngrams(const std::vector<size_t>& a,
                            const std::vector<size_t>& b);
 
-void print_guide_tree(const guide_tree& tree, const file_family& family);
+double file_similarity(const std::vector<size_t>& a,
+                       const std::vector<size_t>& b);
 
 // Groups rows of a file_family's variants by AST pointer identity. Rows
 // whose source files are byte-identical share the same AST (load_asts

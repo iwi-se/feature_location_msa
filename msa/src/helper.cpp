@@ -1,4 +1,5 @@
 #include "helper.hpp"
+#include <algorithm>
 #include <iostream>
 #include <unordered_set>
 
@@ -34,54 +35,17 @@ size_t count_common_ngrams(const std::vector<size_t>& a,
   return count;
 }
 
-void print_guide_tree_node(const std::shared_ptr<guide_tree_node>& node,
-                           const file_family&                      family,
-                           const std::string&                      prefix,
-                           bool                                    is_last)
+double file_similarity(const std::vector<size_t>& a,
+                       const std::vector<size_t>& b)
 {
-  std::cout << prefix << (is_last ? "└── " : "├── ");
-
-  if (node->is_leaf())
-  {
-    size_t idx = node->variant_index.value();
-    std::cout << "leaf[" << family.variants[idx].variant << "]";
-  }
-  else
-  {
-    std::cout << "node";
-  }
-
-  std::cout << " (size=" << node->size << ", sim=" << node->similarity << ")\n";
-
-  std::string child_prefix = prefix + (is_last ? "    " : "│   ");
-
-  if (node->left)
-  {
-    print_guide_tree_node(
-        node->left, family, child_prefix, node->right == nullptr);
-  }
-
-  if (node->right)
-  {
-    print_guide_tree_node(node->right, family, child_prefix, true);
-  }
-}
-
-void print_guide_tree(const guide_tree& tree, const file_family& family)
-{
-  if (!tree.root)
-  {
-    std::cout << "<empty guide tree>\n";
-    return;
-  }
-
-  print_guide_tree_node(tree.root, family, "", true);
+  double ngrams { static_cast<double>(count_common_ngrams(a, b)) };
+  return ngrams / static_cast<double>(std::max(a.size(), b.size()));
 }
 
 variant_dedup_groups
     group_variants_by_ast(const std::vector<file_variant>& variants)
 {
-  variant_dedup_groups groups;
+  variant_dedup_groups                groups;
   std::unordered_map<node_t*, size_t> representative_for_ast;
 
   for (size_t i {}; i < variants.size(); ++i)
