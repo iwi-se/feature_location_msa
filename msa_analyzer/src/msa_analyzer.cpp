@@ -284,7 +284,7 @@ struct operation_t
     std::filesystem::path              spl_specification_file {};
     size_t                             threads { 0 };
     std::set<std::string>              atomic_node_types {};
-    std::map<std::string, std::string> feature_expression_lookup {};
+    std::map<std::string, std::vector<std::string>> feature_expression_lookup {};
     std::map<std::string, size_t>      variant_name_to_system_id {};
 };
 
@@ -444,7 +444,7 @@ std::string canonical_systems_key(std::vector<size_t> systems)
   return result;
 }
 
-std::map<std::string, std::string>
+std::map<std::string, std::vector<std::string>>
     parse_feature_expression_file(const std::filesystem::path &path)
 {
   std::ifstream file(path);
@@ -455,8 +455,8 @@ std::map<std::string, std::string>
     exit(1);
   }
 
-  std::map<std::string, std::string> lookup;
-  std::string                        line;
+  std::map<std::string, std::vector<std::string>> lookup;
+  std::string                                     line;
   while (std::getline(file, line))
   {
     if (!line.empty() && line.back() == '\r')
@@ -488,12 +488,12 @@ std::map<std::string, std::string>
       }
     }
 
-    lookup[canonical_systems_key(systems)] = value_part;
+    lookup[canonical_systems_key(systems)].push_back(value_part);
   }
   return lookup;
 }
 
-std::map<std::string, std::string>
+std::map<std::string, std::vector<std::string>>
     parse_feature_expressions_flag(int argc, char *argv[], int start)
 {
   for (int i = start; i < argc - 1; ++i)
@@ -532,7 +532,7 @@ operation_t cli_arguments(int argc, char *argv[])
     std::filesystem::path spl_specification_file { argv[4] };
     std::set<std::string> atomic_node_types { parse_atomic_types_flag(
         argc, argv, 5) };
-    std::map<std::string, std::string> feature_expression_lookup {
+    std::map<std::string, std::vector<std::string>> feature_expression_lookup {
       parse_feature_expressions_flag(argc, argv, 5)
     };
     std::map<std::string, size_t> variant_name_to_system_id {
@@ -559,7 +559,7 @@ operation_t cli_arguments(int argc, char *argv[])
     size_t                threads { parse_threads_flag(argc, argv, 5) };
     std::set<std::string> atomic_node_types { parse_atomic_types_flag(
         argc, argv, 5) };
-    std::map<std::string, std::string> feature_expression_lookup {
+    std::map<std::string, std::vector<std::string>> feature_expression_lookup {
       parse_feature_expressions_flag(argc, argv, 5)
     };
     std::map<std::string, size_t> variant_name_to_system_id {
@@ -857,6 +857,115 @@ std::string transform_dnf_feature(const std::string &raw)
   return result;
 }
 
+struct and_clause_literals_t
+{
+    std::set<std::string> positive {};
+    size_t                negated_count {};
+};
+
+// Splits a single AND-clause that has already been canonicalized by
+// transform_and_feature (literals joined by "_and_", negated literals
+// prefixed with "not_") into its positive (non-negated) literal names, plus
+// a count of how many literals in the clause were negated.
+and_clause_literals_t
+    literals_of_transformed_and_clause(const std::string &clause)
+{
+  const std::string        sep { "_and_" };
+  std::vector<std::string> parts {};
+  size_t                   start {};
+  size_t                   pos {};
+  while ((pos = clause.find(sep, start)) != std::string::npos)
+  {
+    parts.push_back(clause.substr(start, pos - start));
+    start = pos + sep.size();
+  }
+  parts.push_back(clause.substr(start));
+
+  and_clause_literals_t result {};
+  for (auto &p : parts)
+  {
+    if (p.starts_with("not_"))
+    {
+      ++result.negated_count;
+      continue;
+    }
+    result.positive.insert(p);
+  }
+  return result;
+}
+
+// Parses a transform_dnf_feature-canonicalized DNF string into one
+// and_clause_literals_t per OR-clause.
+std::vector<and_clause_literals_t>
+    clause_literal_sets(const std::string &transformed_dnf)
+{
+  std::vector<and_clause_literals_t> result {};
+  for (const auto &clause : expand_or_feature(transformed_dnf))
+  {
+    result.push_back(literals_of_transformed_and_clause(clause));
+  }
+  return result;
+}
+
+// Union of the positive literals across all OR-clauses of a
+// transform_dnf_feature-canonicalized DNF string.
+std::set<std::string> literal_union(const std::string &transformed_dnf)
+{
+  std::set<std::string> result {};
+  for (const auto &clause_literals : clause_literal_sets(transformed_dnf))
+  {
+    result.insert(clause_literals.positive.begin(),
+                  clause_literals.positive.end());
+  }
+  return result;
+}
+
+// Picks the raw candidate whose transformed literal set best matches
+// parent_context: prefer a candidate with an OR-clause whose positive
+// literals are a superset of parent_context, breaking ties by simplicity —
+// fewest negated literals first (a "not" makes a clause less simple, even if
+// it has fewer positive literals), then fewest extra positive literals
+// (most specific match). Falls back to the first candidate if
+// parent_context is empty or no candidate qualifies.
+size_t pick_best_candidate_index(const std::vector<std::string> &raw_candidates,
+                                 const std::set<std::string>    &parent_context)
+{
+  if (parent_context.empty())
+  {
+    return 0;
+  }
+
+  bool   found_best { false };
+  size_t best_index { 0 };
+  size_t best_negated { 0 };
+  size_t best_extra { 0 };
+  for (size_t i {}; i < raw_candidates.size(); ++i)
+  {
+    for (const auto &clause_literals :
+        clause_literal_sets(transform_dnf_feature(raw_candidates[i])))
+    {
+      if (!std::includes(clause_literals.positive.begin(),
+                         clause_literals.positive.end(),
+                         parent_context.begin(),
+                         parent_context.end()))
+      {
+        continue;
+      }
+      size_t extra { clause_literals.positive.size() - parent_context.size() };
+      size_t negated { clause_literals.negated_count };
+      if (!found_best || negated < best_negated
+          || (negated == best_negated && extra < best_extra))
+      {
+        found_best   = true;
+        best_index   = i;
+        best_negated = negated;
+        best_extra   = extra;
+      }
+    }
+  }
+  return found_best ? best_index : 0;
+}
+
 void print_nodes(const std::vector<std::shared_ptr<node_t>> &nodes)
 {
   for (const auto &node : nodes)
@@ -926,11 +1035,12 @@ std::string hash_systems(const std::vector<size_t> &systems)
   return result;
 }
 
-std::string get_feature_from_systems(const std::vector<size_t> &systems,
-                                     const operation_t         &operation)
+std::vector<std::string>
+    get_feature_candidates_from_systems(const std::vector<size_t> &systems,
+                                        const operation_t         &operation)
 {
-  static std::map<std::string, std::string> system_feature_map {};
-  static std::mutex                         cache_mutex {};
+  static std::map<std::string, std::vector<std::string>> system_feature_map {};
+  static std::mutex                                       cache_mutex {};
   std::string systems_hash { hash_systems(systems) };
 
   {
@@ -941,8 +1051,8 @@ std::string get_feature_from_systems(const std::vector<size_t> &systems,
     }
   }
 
-  std::string result {};
-  auto        lookup_it { operation.feature_expression_lookup.find(
+  std::vector<std::string> result {};
+  auto                     lookup_it { operation.feature_expression_lookup.find(
       canonical_systems_key(systems)) };
   if (lookup_it != operation.feature_expression_lookup.end())
   {
@@ -952,8 +1062,9 @@ std::string get_feature_from_systems(const std::vector<size_t> &systems,
   {
     std::string isolation_call { build_isolation_call(operation,
                                                       systems_hash) };
-    result = exec_and_capture(isolation_call);
-    result.pop_back();
+    std::string exec_result { exec_and_capture(isolation_call) };
+    exec_result.pop_back();
+    result.push_back(exec_result);
   }
 
   {
@@ -961,6 +1072,12 @@ std::string get_feature_from_systems(const std::vector<size_t> &systems,
     system_feature_map.insert(std::make_pair(systems_hash, result));
     return result;
   }
+}
+
+std::string get_feature_from_systems(const std::vector<size_t> &systems,
+                                     const operation_t         &operation)
+{
+  return get_feature_candidates_from_systems(systems, operation).front();
 }
 
 void analyze(operation_t op)
@@ -1023,7 +1140,17 @@ void analyze(operation_t op)
     std::map<std::string, std::vector<std::shared_ptr<node_t>>>
         nodes_by_feature {};
 
-    const size_t col_count { systems.begin()->second.tokens.size() };
+    struct column_info_t
+    {
+        size_t                    col;
+        std::vector<size_t>       present;
+        std::vector<std::string>  candidates;
+        std::shared_ptr<node_t>   owner_node;
+        size_t                    owner_sys;
+    };
+
+    std::vector<column_info_t> columns_info {};
+    const size_t                col_count { systems.begin()->second.tokens.size() };
     for (size_t col {}; col < col_count; ++col)
     {
       std::vector<size_t> present {};
@@ -1038,8 +1165,8 @@ void analyze(operation_t op)
       {
         continue;
       }
-      const std::string feat { transform_dnf_feature(
-          get_feature_from_systems(present, op)) };
+      std::vector<std::string> candidates { get_feature_candidates_from_systems(
+          present, op) };
 
       bool                    has_owner { false };
       size_t                  best_score {};
@@ -1047,8 +1174,7 @@ void analyze(operation_t op)
       std::shared_ptr<node_t> owner_node {};
       for (auto sys_id : present)
       {
-        auto &node { systems.at(sys_id).tokens[col].node };
-        node->feature = feat;
+        auto  &node { systems.at(sys_id).tokens[col].node };
         size_t score { score_of(node) };
         if (!has_owner || score > best_score
             || (score == best_score && sys_id < owner_sys))
@@ -1060,10 +1186,123 @@ void analyze(operation_t op)
         }
       }
 
+      columns_info.push_back({ col,
+                               std::move(present),
+                               std::move(candidates),
+                               owner_node,
+                               owner_sys });
+    }
+
+    auto finalize_column
+        = [&](const column_info_t &info, const std::string &chosen_raw)
+    {
+      const std::string feat { transform_dnf_feature(chosen_raw) };
+      for (auto sys_id : info.present)
+      {
+        systems.at(sys_id).tokens[info.col].node->feature = feat;
+      }
       for (const auto &f : expand_or_feature(feat))
       {
-        nodes_by_feature[f].push_back(owner_node);
+        nodes_by_feature[f].push_back(info.owner_node);
       }
+    };
+
+    // Disambiguate ambiguous system-combinations using the ArgoUML trace
+    // hierarchy. A class trace has no parent and is never disambiguated; a
+    // method trace is disambiguated against its enclosing class's trace;
+    // anything else (refinement-line-contributing tokens) is disambiguated
+    // against its enclosing method's trace, falling back to its enclosing
+    // class's trace. Column order is source-document order, but modifiers,
+    // annotations, and keywords that precede a class/method's own identifier
+    // token are still structurally inside that class/method and would be
+    // visited *before* the identifier's column resolves it — so identifier
+    // columns are fully resolved for the whole file first (class before
+    // method), and every other column is only resolved afterwards, once all
+    // identifier context is available regardless of relative column order.
+    for (auto &info : columns_info)
+    {
+      if (is_class_identifier(info.owner_node))
+      {
+        finalize_column(info, info.candidates.front());
+      }
+    }
+    for (auto &info : columns_info)
+    {
+      if (!is_method_identifier(info.owner_node))
+      {
+        continue;
+      }
+      std::string chosen_raw { info.candidates.front() };
+      if (info.candidates.size() > 1)
+      {
+        std::set<std::string> parent_context {};
+        auto class_node { get_parent_class_node(info.owner_node) };
+        auto class_id { class_node == nullptr
+                            ? nullptr
+                            : class_node->get_child_by_tag("identifier") };
+        if (class_id != nullptr && !class_id->feature.empty())
+        {
+          parent_context = literal_union(class_id->feature);
+        }
+        chosen_raw = info.candidates[pick_best_candidate_index(
+            info.candidates, parent_context)];
+      }
+      finalize_column(info, chosen_raw);
+    }
+    for (auto &info : columns_info)
+    {
+      if (is_class_identifier(info.owner_node)
+          || is_method_identifier(info.owner_node))
+      {
+        continue;
+      }
+      std::string chosen_raw { info.candidates.front() };
+      if (info.candidates.size() > 1)
+      {
+        std::set<std::string> parent_context {};
+        auto method_node { get_parent_method_node(info.owner_node) };
+        auto method_id { method_node == nullptr
+                             ? nullptr
+                             : method_node->get_child_by_tag("identifier") };
+        if (method_id != nullptr && !method_id->feature.empty())
+        {
+          parent_context = literal_union(method_id->feature);
+        }
+        else
+        {
+          auto class_node { get_parent_class_node(info.owner_node) };
+          auto class_id { class_node == nullptr
+                              ? nullptr
+                              : class_node->get_child_by_tag("identifier") };
+          if (class_id != nullptr && !class_id->feature.empty())
+          {
+            parent_context = literal_union(class_id->feature);
+          }
+          else if (class_node == nullptr)
+          {
+            // Genuinely top-level token (e.g. an import declaration) with no
+            // enclosing class or method at all. find_refinement_traces'
+            // import special-case broadcasts such a token's resolved feature
+            // to every top-level class in the file, so use the union of
+            // those classes' already-resolved traces as context.
+            for (const auto &top_level_class : get_top_level_class_nodes(
+                     systems.at(info.owner_sys).root))
+            {
+              auto top_level_id {
+                top_level_class->get_child_by_tag("identifier")
+              };
+              if (top_level_id != nullptr && !top_level_id->feature.empty())
+              {
+                auto literals { literal_union(top_level_id->feature) };
+                parent_context.insert(literals.begin(), literals.end());
+              }
+            }
+          }
+        }
+        chosen_raw = info.candidates[pick_best_candidate_index(
+            info.candidates, parent_context)];
+      }
+      finalize_column(info, chosen_raw);
     }
 
     for (auto &[feat, nodes] : nodes_by_feature)

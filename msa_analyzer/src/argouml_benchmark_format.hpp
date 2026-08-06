@@ -46,7 +46,13 @@ class output_lines_t
 };
 
 std::shared_ptr<node_t> get_parent_method_node(std::shared_ptr<node_t> node);
+std::shared_ptr<node_t> get_parent_class_node(std::shared_ptr<node_t> node);
+std::string             get_identifier(std::shared_ptr<node_t> node);
 std::string             get_method_fqn(std::shared_ptr<node_t> node);
+bool                    is_class_identifier(std::shared_ptr<node_t> n);
+bool                    is_method_identifier(std::shared_ptr<node_t> n);
+std::vector<std::shared_ptr<node_t>>
+    get_top_level_class_nodes(std::shared_ptr<node_t> node);
 
 output_lines_t build_argouml_benchmark_format_for_file(
     std::vector<std::shared_ptr<node_t>> included_tokens,
