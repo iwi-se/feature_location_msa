@@ -16,7 +16,7 @@ enum class trace_extent_t
   full
 };
 
-trace_extent_t is_trace(std::shared_ptr<node_t>              node,
+trace_extent_t is_trace(std::shared_ptr<node_t>                     node,
                         const std::vector<std::shared_ptr<node_t>> &other_nodes)
 {
   auto result { trace_extent_t::full };
@@ -97,7 +97,8 @@ std::shared_ptr<node_t> get_parent_class_node(std::shared_ptr<node_t> node)
   return node;
 }
 
-std::vector<std::shared_ptr<node_t>> get_top_level_class_nodes(std::shared_ptr<node_t> node)
+std::vector<std::shared_ptr<node_t>>
+    get_top_level_class_nodes(std::shared_ptr<node_t> node)
 {
   std::vector<std::shared_ptr<node_t>> result;
   std::stack<std::shared_ptr<node_t>>  stack;
@@ -160,8 +161,8 @@ std::string get_class_fqn(std::shared_ptr<node_t> node)
   }
 
   // Get all identifiers from package declaration
-  std::vector<std::string>  package_parts;
-  std::shared_ptr<node_t>   current = package_declaration;
+  std::vector<std::string> package_parts;
+  std::shared_ptr<node_t>  current = package_declaration;
   while (current != nullptr)
   {
     auto                    &children { current->get_children() };
@@ -344,39 +345,37 @@ void output_lines_t::remove_superfluous_lines()
     // prove the class is genuinely and exclusively part of this feature, so
     // it must not swallow narrower lines that carry genuine evidence of
     // their own (see output_line_t::or_derived_only).
-    std::erase_if(method_lines,
-                  [&class_line](const output_line_t &line)
-                  {
-                    bool covers { line.class_fqn.starts_with(
-                                     class_line.class_fqn + ".")
-                                 || line.class_fqn == class_line.class_fqn };
-                    return covers
-                           && !(class_line.or_derived_only
-                                && !line.or_derived_only);
-                  });
-    std::erase_if(refinement_lines,
-                  [&class_line](const output_line_t &line)
-                  {
-                    bool covers { line.class_fqn.starts_with(
-                                     class_line.class_fqn + ".")
-                                 || line.class_fqn == class_line.class_fqn };
-                    return covers
-                           && !(class_line.or_derived_only
-                                && !line.or_derived_only);
-                  });
+    std::erase_if(
+        method_lines,
+        [&class_line](const output_line_t &line)
+        {
+          bool covers { line.class_fqn.starts_with(class_line.class_fqn + ".")
+                        || line.class_fqn == class_line.class_fqn };
+          return covers
+                 && !(class_line.or_derived_only && !line.or_derived_only);
+        });
+    std::erase_if(
+        refinement_lines,
+        [&class_line](const output_line_t &line)
+        {
+          bool covers { line.class_fqn.starts_with(class_line.class_fqn + ".")
+                        || line.class_fqn == class_line.class_fqn };
+          return covers
+                 && !(class_line.or_derived_only && !line.or_derived_only);
+        });
   }
 
   for (const auto &method_line : method_lines)
   {
-    std::erase_if(refinement_lines,
-                  [&method_line](const output_line_t &line)
-                  {
-                    bool covers { line.class_fqn == method_line.class_fqn
-                                 && line.method_fqn == method_line.method_fqn };
-                    return covers
-                           && !(method_line.or_derived_only
-                                && !line.or_derived_only);
-                  });
+    std::erase_if(
+        refinement_lines,
+        [&method_line](const output_line_t &line)
+        {
+          bool covers { line.class_fqn == method_line.class_fqn
+                        && line.method_fqn == method_line.method_fqn };
+          return covers
+                 && !(method_line.or_derived_only && !line.or_derived_only);
+        });
   }
 }
 
@@ -401,7 +400,8 @@ std::string output_lines_t::render()
   return output;
 }
 
-std::vector<std::shared_ptr<node_t>> find_all_class_nodes(std::shared_ptr<node_t> root)
+std::vector<std::shared_ptr<node_t>>
+    find_all_class_nodes(std::shared_ptr<node_t> root)
 {
   std::vector<std::shared_ptr<node_t>> class_nodes;
   std::stack<std::shared_ptr<node_t>>  stack;
@@ -433,7 +433,8 @@ bool is_method_identifier(std::shared_ptr<node_t> n)
   return n->get_tag() == "identifier" && is_method_declaration(n->get_parent());
 }
 
-std::vector<std::shared_ptr<node_t>> find_all_method_nodes(std::shared_ptr<node_t> root)
+std::vector<std::shared_ptr<node_t>>
+    find_all_method_nodes(std::shared_ptr<node_t> root)
 {
   std::vector<std::shared_ptr<node_t>> class_nodes;
   std::stack<std::shared_ptr<node_t>>  stack;
@@ -454,7 +455,8 @@ std::vector<std::shared_ptr<node_t>> find_all_method_nodes(std::shared_ptr<node_
   return class_nodes;
 }
 
-std::vector<std::shared_ptr<node_t>> find_all_import_nodes(std::shared_ptr<node_t> root)
+std::vector<std::shared_ptr<node_t>>
+    find_all_import_nodes(std::shared_ptr<node_t> root)
 {
   std::vector<std::shared_ptr<node_t>> class_nodes;
   std::stack<std::shared_ptr<node_t>>  stack;
@@ -475,10 +477,10 @@ std::vector<std::shared_ptr<node_t>> find_all_import_nodes(std::shared_ptr<node_
   return class_nodes;
 }
 
-output_lines_t find_full_traces(
-    const std::vector<std::shared_ptr<node_t>> &included_nodes,
-    const std::vector<std::shared_ptr<node_t>> &all_roots,
-    const std::string                          &target_feature)
+output_lines_t
+    find_full_traces(const std::vector<std::shared_ptr<node_t>> &included_nodes,
+                     const std::vector<std::shared_ptr<node_t>> &all_roots,
+                     const std::string                          &target_feature)
 {
   output_lines_t output_lines {};
 
@@ -491,9 +493,8 @@ output_lines_t find_full_traces(
   for (const auto &root : all_roots)
   {
     auto root_class_nodes { find_all_class_nodes(root) };
-    class_nodes.insert(class_nodes.end(),
-                       root_class_nodes.begin(),
-                       root_class_nodes.end());
+    class_nodes.insert(
+        class_nodes.end(), root_class_nodes.begin(), root_class_nodes.end());
   }
 
   for (const auto &class_node : class_nodes)
@@ -504,7 +505,9 @@ output_lines_t find_full_traces(
     {
       auto leaf = leaf_weak.lock();
       if (!leaf)
+      {
         continue;
+      }
       if (is_class_identifier(leaf)
           && std::find(included_nodes.begin(), included_nodes.end(), leaf)
                  != included_nodes.end())
@@ -529,9 +532,8 @@ output_lines_t find_full_traces(
   for (const auto &root : all_roots)
   {
     auto root_method_nodes { find_all_method_nodes(root) };
-    method_nodes.insert(method_nodes.end(),
-                        root_method_nodes.begin(),
-                        root_method_nodes.end());
+    method_nodes.insert(
+        method_nodes.end(), root_method_nodes.begin(), root_method_nodes.end());
   }
 
   for (const auto &method_node : method_nodes)
@@ -542,7 +544,9 @@ output_lines_t find_full_traces(
     {
       auto leaf = leaf_weak.lock();
       if (!leaf)
+      {
         continue;
+      }
       if (is_method_identifier(leaf) && leaf->get_parent() == method_node
           && is_class_declaration(
               leaf->get_parent()->get_parent()->get_parent())
@@ -572,10 +576,10 @@ output_lines_t find_full_traces(
   return output_lines;
 }
 
-output_lines_t
-    find_refinement_traces(const std::vector<std::shared_ptr<node_t>> &included_tokens,
-                           const std::vector<std::shared_ptr<node_t>> &all_roots,
-                           const std::string                          &target_feature)
+output_lines_t find_refinement_traces(
+    const std::vector<std::shared_ptr<node_t>> &included_tokens,
+    const std::vector<std::shared_ptr<node_t>> &all_roots,
+    const std::string                          &target_feature)
 {
   output_lines_t output_lines;
 
@@ -601,7 +605,9 @@ output_lines_t
     {
       auto leaf = leaf_weak.lock();
       if (!leaf)
+      {
         continue;
+      }
       if (std::find(included_tokens.begin(), included_tokens.end(), leaf)
           != included_tokens.end())
       {

@@ -97,6 +97,10 @@ bool parse_system_msa(
   if (file)
   {
     std::getline(file, system_name);
+    if (system_name.empty())
+    {
+      return false;
+    }
     if (!variant_id_map.empty())
     {
       auto it { variant_id_map.find(system_name) };
@@ -250,8 +254,8 @@ msa_representation_t
 
 msa_representation_t
     parse_msa(const std::filesystem::path         &msa_file,
-             const std::set<std::string>         &atomic_types,
-             const std::map<std::string, size_t> &variant_id_map)
+              const std::set<std::string>         &atomic_types,
+              const std::map<std::string, size_t> &variant_id_map)
 {
   if (std::filesystem::is_directory(msa_file))
   {
@@ -260,8 +264,7 @@ msa_representation_t
   else
   {
     msa_representation_t msa {};
-    auto                 file_msa { parse_file_msa(
-        msa_file, atomic_types, variant_id_map) };
+    auto file_msa { parse_file_msa(msa_file, atomic_types, variant_id_map) };
     msa.lang = get_lang_from_file_path(file_msa.first);
     msa.internal_rep.emplace(std::move(file_msa));
     return msa;
