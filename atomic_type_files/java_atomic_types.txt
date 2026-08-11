@@ -7,4 +7,3 @@ array_access
 class_literal
 modifiers
 catch_formal_parameter
-package_declaration

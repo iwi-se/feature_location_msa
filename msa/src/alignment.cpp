@@ -799,6 +799,11 @@ void align_file_variants(std::vector<file_variant>& variants,
     }
   }
 
+  if (distinct_indices.size() < 3)
+  {
+    return; // refine_alignment needs >=2 "other" variants to realign against
+  }
+
   constexpr size_t kMaxRefinementIterations { 50 };
   double           current_score {};
   if constexpr (kRefinementStopMode == refinement_stop_mode::score_based)

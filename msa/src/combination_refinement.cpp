@@ -460,6 +460,108 @@ namespace
     }
   }
 
+  // Classifies a scenario as a "strict" improvement for the currently
+  // processed rare combination (processed_key = the anchor's combination
+  // key before this scenario). Side effects on "other" affected columns
+  // (everything but the anchor) are tallied as net sums across all of them,
+  // not gated per column: a bad effect on one column may be offset by a
+  // good effect on another.
+  bool is_strict_improvement(
+      const scenario_result                             &eval,
+      const combination_key                             &processed_key,
+      const std::unordered_map<combination_key, size_t> &combination_counts,
+      size_t                                             anchor,
+      size_t                                             threshold)
+  {
+    auto anchor_after_it { std::find_if(eval.after.begin(),
+                                        eval.after.end(),
+                                        [&](const auto &p)
+                                        { return p.first == anchor; }) };
+    auto anchor_after_key { anchor_after_it != eval.after.end()
+                                ? key_from_state(anchor_after_it->second)
+                                : processed_key };
+
+    if (is_all_filler(anchor_after_key))
+    {
+      log_event("[is_strict_improvement] rule (a) anchor dissolves: anchor="
+                + std::to_string(anchor) + ", processed_key=" + processed_key);
+      return true; // rule (a): anchor dissolves, always strictly better
+    }
+
+    int net_rare_combinations {};
+    int net_rare_counter_delta {};
+
+    for (auto &[col, before_state] : eval.before)
+    {
+      auto  after_it { std::find_if(eval.after.begin(),
+                                   eval.after.end(),
+                                   [&](const auto &p)
+                                   { return p.first == col; }) };
+      auto &after_state { after_it->second };
+
+      auto before_key { key_from_state(before_state) };
+      auto after_key { key_from_state(after_state) };
+      if (before_key == after_key)
+      {
+        continue;
+      }
+
+      if (!is_all_filler(before_key))
+      {
+        auto   it { combination_counts.find(before_key) };
+        size_t before_count { it != combination_counts.end() ? it->second : 0 };
+        if (before_count == 1)
+        {
+          net_rare_combinations -= 1;
+        }
+        if (before_count > 0 && before_count < threshold)
+        {
+          net_rare_counter_delta -= 1;
+        }
+      }
+
+      if (!is_all_filler(after_key))
+      {
+        auto   it { combination_counts.find(after_key) };
+        size_t existing_count { it != combination_counts.end() ? it->second
+                                                               : 0 };
+        size_t after_count { existing_count + 1 };
+        if (after_count < threshold)
+        {
+          net_rare_counter_delta += 1;
+          if (existing_count == 0)
+          {
+            net_rare_combinations += 1;
+          }
+        }
+      }
+    }
+
+    if (net_rare_combinations < 0)
+    {
+      log_event(
+          "[is_strict_improvement] rule (b) combination full removal: anchor="
+          + std::to_string(anchor) + ", processed_key=" + processed_key
+          + ", net_new_rare=" + std::to_string(net_rare_combinations)
+          + ", net_rare_counter_delta="
+          + std::to_string(net_rare_counter_delta));
+      return true; // rule (b): full removal
+    }
+
+    if (net_rare_counter_delta < 0 && net_rare_combinations == 0)
+    {
+      log_event("[is_strict_improvement] rule (c) combination count net "
+                "decrease: anchor="
+                + std::to_string(anchor) + ", processed_key=" + processed_key
+                + ", net_new_rare=" + std::to_string(net_rare_combinations)
+                + ", net_rare_counter_delta="
+                + std::to_string(net_rare_counter_delta));
+      return true; // rule (c): plain decrease
+    }
+
+    return false;
+  }
+
   size_t count_rare_combinations(
       const std::unordered_map<combination_key, size_t> &counts)
   {
@@ -502,6 +604,16 @@ namespace
     pull
   };
 
+  // strict:      only a scenario classified by is_strict_improvement is
+  //              accepted; run once (see run_refinement_passes).
+  // exploratory: any feasible scenario is accepted, score only ranks
+  //              options within a column; run to a fixed point.
+  enum class scenario_mode
+  {
+    strict,
+    exploratory
+  };
+
   // Required action for row r given the anchor's current presence and the
   // target key's desired presence bit.
   row_action required_action(bool anchor_present_r, bool target_present_r)
@@ -513,233 +625,288 @@ namespace
     return target_present_r ? row_action::pull : row_action::push;
   }
 
-  // Runs up to kMaxRefinementPass passes of the rare-combination merge
-  // search, sweeping columns either forward (0 -> n-1) or backward
-  // (n-1 -> 0) within each pass. Mutates variants' token tables in place.
-  void run_refinement_passes(std::vector<file_variant>  &variants,
-                             bool                        forward,
-                             const variant_dedup_groups &groups)
+  // Runs a single sweep of the rare-combination search over all columns,
+  // either forward (0 -> n-1) or backward (n-1 -> 0). Mutates variants'
+  // token tables in place. Returns whether anything changed. Candidate
+  // generation and scenario enumeration are identical regardless of mode;
+  // only the consider() acceptance/ranking policy differs (see
+  // scenario_mode).
+  bool run_sweep(std::vector<file_variant>  &variants,
+                 bool                        forward,
+                 const variant_dedup_groups &groups,
+                 scenario_mode               mode)
   {
     size_t      rows { variants.size() };
     const auto &representatives { groups.distinct_indices };
 
-    for (size_t pass {}; pass < kMaxRefinementPass; ++pass)
+    auto   combination_counts { build_combination_counts(variants) };
+    size_t n { variants.front().m_token_table->size() };
+
+    auto is_rare = [&](const combination_key &key)
     {
-      std::ostringstream progress_detail;
-      progress_detail << (forward ? "forward" : "backward");
-      report_progress(pipeline_stage::refine_rare_combinations,
-                      pass + 1,
-                      kMaxRefinementPass,
-                      progress_detail.str());
+      auto it { combination_counts.find(key) };
+      return it != combination_counts.end() && it->second > 0
+             && it->second < kRarityThreshold;
+    };
 
-      auto   combination_counts { build_combination_counts(variants) };
-      size_t n { variants.front().m_token_table->size() };
+    bool changed_this_pass { false };
 
-      auto is_rare = [&](const combination_key &key)
+    for (size_t idx {}; idx < n; ++idx)
+    {
+      size_t i { forward ? idx : n - 1 - idx };
+
+      auto            anchor_state { read_column(variants, i) };
+      combination_key processed_key { key_from_state(anchor_state) };
+      if (!is_rare(processed_key))
       {
-        auto it { combination_counts.find(key) };
-        return it != combination_counts.end() && it->second > 0
-               && it->second < kRarityThreshold;
+        continue;
+      }
+
+      std::string anchor_text { common_text(anchor_state) };
+
+      // Candidates are computed once per representative row, not once per
+      // real row: duplicate rows (same AST) always yield identical
+      // candidates, so computing them per row would be pure waste and
+      // would blow up the scenario branching below combinatorially.
+      std::vector<std::vector<std::optional<move_candidate>>> options(
+          representatives.size());
+      bool any_option { false };
+      for (size_t ri {}; ri < representatives.size(); ++ri)
+      {
+        size_t rep { representatives[ri] };
+        options[ri].push_back(std::nullopt); // no_op
+        for (auto &cand : row_candidates(variants, i, rep, n, anchor_text))
+        {
+          options[ri].push_back(cand);
+          any_option = true;
+        }
+      }
+
+      if (!any_option)
+      {
+        continue;
+      }
+
+      auto targets { wanted_targets(combination_counts,
+                                    anchor_state.present,
+                                    column_combination_size(anchor_state)) };
+
+      // Also try resolving the rare column by pushing it out entirely,
+      // leaving it all-filler. All-filler columns are dropped later,
+      // shortening the alignment, so evaluate_scenario awards this a
+      // dominant score whenever it's reachable.
+      targets.push_back(combination_key(rows, '0'));
+
+      bool            best_found { false };
+      scenario_result best;
+
+      auto consider = [&](scenario_result &&eval)
+      {
+        if (!eval.feasible)
+        {
+          return;
+        }
+        if (mode == scenario_mode::strict
+            && !is_strict_improvement(
+                eval, processed_key, combination_counts, i, kRarityThreshold))
+        {
+          return;
+        }
+
+        bool better {};
+        if (!best_found)
+        {
+          better = true;
+        }
+        else if (eval.score != best.score)
+        {
+          better = eval.score > best.score;
+        }
+        else if (auto eval_touches
+                 = forward ? eval.touches_left_col : eval.touches_right_col,
+                 best_touches
+                 = forward ? best.touches_left_col : best.touches_right_col;
+                 eval_touches != best_touches)
+        {
+          better = !eval_touches;
+        }
+        else if (eval.pull_count != best.pull_count)
+        {
+          better = eval.pull_count < best.pull_count;
+        }
+        else
+        {
+          better = false;
+        }
+
+        if (better)
+        {
+          best_found = true;
+          best       = std::move(eval);
+        }
       };
 
-      bool changed_this_pass { false };
-
-      for (size_t idx {}; idx < n; ++idx)
+      for (auto &target_key : targets)
       {
-        size_t i { forward ? idx : n - 1 - idx };
-
-        auto anchor_state { read_column(variants, i) };
-        if (!is_rare(key_from_state(anchor_state)))
-        {
-          continue;
-        }
-
-        std::string anchor_text { common_text(anchor_state) };
-
-        // Candidates are computed once per representative row, not once per
-        // real row: duplicate rows (same AST) always yield identical
-        // candidates, so computing them per row would be pure waste and
-        // would blow up the scenario branching below combinatorially.
-        std::vector<std::vector<std::optional<move_candidate>>> options(
+        // Branched on per representative only: since duplicate rows are
+        // content-identical, required_action and target_key bits agree
+        // across a whole group (see expand_group_moves), so a
+        // representative's decision speaks for its entire group.
+        std::vector<std::vector<move_candidate>> row_choices(
             representatives.size());
-        bool any_option { false };
-        for (size_t ri {}; ri < representatives.size(); ++ri)
+        bool feasible { true };
+
+        for (size_t ri {}; ri < representatives.size() && feasible; ++ri)
         {
-          size_t rep { representatives[ri] };
-          options[ri].push_back(std::nullopt); // no_op
-          for (auto &cand : row_candidates(variants, i, rep, n, anchor_text))
+          size_t     r { representatives[ri] };
+          row_action action { required_action(anchor_state.present[r],
+                                              target_key[r] == '1') };
+          if (action == row_action::no_op)
           {
-            options[ri].push_back(cand);
-            any_option = true;
+            continue; // row_choices[ri] stays empty -> not branched on
+          }
+
+          bool want_pull { action == row_action::pull };
+          for (auto &cand : options[ri])
+          {
+            if (cand && cand->is_pull == want_pull)
+            {
+              row_choices[ri].push_back(*cand);
+            }
+          }
+          if (row_choices[ri].empty())
+          {
+            feasible = false; // required row has no matching candidate
           }
         }
 
-        if (!any_option)
+        if (!feasible)
         {
           continue;
         }
 
-        auto targets { wanted_targets(combination_counts,
-                                      anchor_state.present,
-                                      column_combination_size(anchor_state)) };
-
-        // Also try resolving the rare column by pushing it out entirely,
-        // leaving it all-filler. All-filler columns are dropped later,
-        // shortening the alignment, so evaluate_scenario awards this a
-        // dominant score whenever it's reachable.
-        targets.push_back(combination_key(rows, '0'));
-
-        bool            best_found { false };
-        scenario_result best;
-
-        auto consider = [&](scenario_result &&eval)
+        size_t num_scenarios { 1 };
+        for (const auto row : row_choices)
         {
-          if (!eval.feasible || eval.score < 0)
+          num_scenarios *= std::max(1ul, row.size());
+        }
+        log_event("Found " + std::to_string(num_scenarios)
+                  + " scenarios in column " + std::to_string(i + 1)
+                  + " with text " + anchor_text);
+        if (num_scenarios > kMaxScenarios)
+        {
+          log_event("Too many scenarios, skipping");
+          continue;
+        }
+
+        std::vector<move_candidate> chosen;
+
+        std::function<void(size_t)> generate = [&](size_t ri)
+        {
+          if (ri == representatives.size())
           {
+            consider(evaluate_scenario(variants,
+                                       expand_group_moves(chosen, groups),
+                                       i,
+                                       combination_counts,
+                                       kRarityThreshold));
             return;
           }
-
-          bool better {};
-          if (!best_found)
+          if (row_choices[ri].empty())
           {
-            better = true;
+            generate(ri + 1); // no-op row: not part of chosen
+            return;
           }
-          else if (eval.score != best.score)
+          for (auto &cand : row_choices[ri])
           {
-            better = eval.score > best.score;
-          }
-          else if (auto eval_touches
-                   = forward ? eval.touches_left_col : eval.touches_right_col,
-                   best_touches
-                   = forward ? best.touches_left_col : best.touches_right_col;
-                   eval_touches != best_touches)
-          {
-            better = !eval_touches;
-          }
-          else if (eval.pull_count != best.pull_count)
-          {
-            better = eval.pull_count < best.pull_count;
-          }
-          else
-          {
-            better = false;
-          }
-
-          if (better)
-          {
-            best_found = true;
-            best       = std::move(eval);
+            chosen.push_back(cand);
+            generate(ri + 1);
+            chosen.pop_back();
           }
         };
 
-        for (auto &target_key : targets)
-        {
-          // Branched on per representative only: since duplicate rows are
-          // content-identical, required_action and target_key bits agree
-          // across a whole group (see expand_group_moves), so a
-          // representative's decision speaks for its entire group.
-          std::vector<std::vector<move_candidate>> row_choices(
-              representatives.size());
-          bool feasible { true };
-
-          for (size_t ri {}; ri < representatives.size() && feasible; ++ri)
-          {
-            size_t     r { representatives[ri] };
-            row_action action { required_action(anchor_state.present[r],
-                                                target_key[r] == '1') };
-            if (action == row_action::no_op)
-            {
-              continue; // row_choices[ri] stays empty -> not branched on
-            }
-
-            bool want_pull { action == row_action::pull };
-            for (auto &cand : options[ri])
-            {
-              if (cand && cand->is_pull == want_pull)
-              {
-                row_choices[ri].push_back(*cand);
-              }
-            }
-            if (row_choices[ri].empty())
-            {
-              feasible = false; // required row has no matching candidate
-            }
-          }
-
-          if (!feasible)
-          {
-            continue;
-          }
-
-          size_t num_scenarios { 1 };
-          for (const auto row : row_choices)
-          {
-            num_scenarios *= std::max(1ul, row.size());
-          }
-          log_event("Found " + std::to_string(num_scenarios)
-                    + " scenarios in column " + std::to_string(i + 1)
-                    + " with text " + anchor_text);
-          if (num_scenarios > kMaxScenarios)
-          {
-            log_event("Too many scenarios, skipping");
-            continue;
-          }
-
-          std::vector<move_candidate> chosen;
-
-          std::function<void(size_t)> generate = [&](size_t ri)
-          {
-            if (ri == representatives.size())
-            {
-              consider(evaluate_scenario(variants,
-                                         expand_group_moves(chosen, groups),
-                                         i,
-                                         combination_counts,
-                                         kRarityThreshold));
-              return;
-            }
-            if (row_choices[ri].empty())
-            {
-              generate(ri + 1); // no-op row: not part of chosen
-              return;
-            }
-            for (auto &cand : row_choices[ri])
-            {
-              chosen.push_back(cand);
-              generate(ri + 1);
-              chosen.pop_back();
-            }
-          };
-
-          generate(0);
-        }
-
-        if (!best_found)
-        {
-          continue;
-        }
-
-        for (size_t k {}; k < best.before.size(); ++k)
-        {
-          apply_transition(
-              combination_counts, best.before[k].second, best.after[k].second);
-        }
-
-        for (auto &m : best.moves)
-        {
-          auto &table { *variants[m.row].m_token_table };
-          table[m.to_col]   = std::move(table[m.from_col]);
-          table[m.from_col] = FILLER;
-        }
-
-        changed_this_pass = true;
+        generate(0);
       }
 
-      if (!changed_this_pass)
+      if (!best_found)
+      {
+        continue;
+      }
+
+      for (size_t k {}; k < best.before.size(); ++k)
+      {
+        apply_transition(
+            combination_counts, best.before[k].second, best.after[k].second);
+      }
+
+      for (auto &m : best.moves)
+      {
+        auto &table { *variants[m.row].m_token_table };
+        table[m.to_col]   = std::move(table[m.from_col]);
+        table[m.from_col] = FILLER;
+      }
+
+      changed_this_pass = true;
+    }
+
+    return changed_this_pass;
+  }
+
+  struct direction_outcome
+  {
+      std::vector<token_table> tables;
+      size_t                   rare;
+      size_t                   combos;
+  };
+
+  // Runs the strict phase unconditionally: one forward sweep followed by one
+  // backward sweep (each a single pass, per design -- the strict phase never
+  // iterates). Applied directly to variants with no before/after comparison
+  // of any kind: strict-phase moves are, by construction (see
+  // is_strict_improvement), always wanted regardless of their effect on the
+  // rare/combos metric used below to gate the exploratory phase. This is a
+  // hard floor -- nothing downstream of this call is allowed to revert it.
+  void run_strict_phase(std::vector<file_variant>  &variants,
+                        const variant_dedup_groups &groups)
+  {
+    report_progress(
+        pipeline_stage::refine_rare_combinations, 1, 2, "forward strict");
+    run_sweep(variants, /*forward=*/true, groups, scenario_mode::strict);
+    report_progress(
+        pipeline_stage::refine_rare_combinations, 2, 2, "backward strict");
+    run_sweep(variants, /*forward=*/false, groups, scenario_mode::strict);
+  }
+
+  // Runs up to kMaxRefinementPass exploratory passes (iterated to a fixed
+  // point), sweeping columns either forward (0 -> n-1) or backward
+  // (n-1 -> 0), starting from baseline_tables (the post-strict-phase state,
+  // never pristine original). This is the only phase whose result is
+  // allowed to be discarded by the caller.
+  direction_outcome
+      run_exploratory_direction(std::vector<file_variant>      &variants,
+                                bool                            forward,
+                                const variant_dedup_groups     &groups,
+                                const std::vector<token_table> &baseline_tables)
+  {
+    restore_tables(variants, baseline_tables);
+    std::string direction { forward ? "forward" : "backward" };
+
+    for (size_t pass {}; pass < kMaxRefinementPass; ++pass)
+    {
+      report_progress(pipeline_stage::refine_rare_combinations,
+                      pass + 1,
+                      kMaxRefinementPass,
+                      direction + " exploratory");
+
+      if (!run_sweep(variants, forward, groups, scenario_mode::exploratory))
       {
         break;
       }
     }
+
+    auto   counts { build_combination_counts(variants) };
+    size_t rare { count_rare_combinations(counts) };
+    return { snapshot_tables(variants), rare, counts.size() };
   }
 } // namespace
 
@@ -778,6 +945,11 @@ void refine_rare_combinations(std::vector<file_variant> &variants)
     return;
   }
 
+  if (variants.size() < 2)
+  {
+    return; // no combinations to refine with a single variant
+  }
+
   size_t dbg_initial_n { variants.front().m_token_table->size() };
 
   // Computed once and reused across every pass and both sweep directions:
@@ -785,33 +957,38 @@ void refine_rare_combinations(std::vector<file_variant> &variants)
   // mutated/restored below, since only m_token_table is touched.
   auto groups { group_variants_by_ast(variants) };
 
-  auto   original_tables { snapshot_tables(variants) };
   auto   before_counts { build_combination_counts(variants) };
   size_t before_rare { count_rare_combinations(before_counts) };
   size_t before_combos { before_counts.size() };
 
-  run_refinement_passes(variants, /*forward=*/true, groups);
-  auto   forward_tables { snapshot_tables(variants) };
-  auto   forward_counts { build_combination_counts(variants) };
-  size_t forward_rare { count_rare_combinations(forward_counts) };
-  size_t forward_combos { forward_counts.size() };
+  // Strict phase: applied unconditionally, up front, with no comparison
+  // against the pre-strict state at all. This is the floor -- everything
+  // below only ever compares against *this*, never against pristine
+  // original, so a strict-phase fix can never be reverted by anything that
+  // happens afterwards.
+  run_strict_phase(variants, groups);
+  auto   strict_tables { snapshot_tables(variants) };
+  auto   strict_counts { build_combination_counts(variants) };
+  size_t strict_rare { count_rare_combinations(strict_counts) };
+  size_t strict_combos { strict_counts.size() };
 
-  restore_tables(variants, original_tables);
-  run_refinement_passes(variants, /*forward=*/false, groups);
-  auto   backward_tables { snapshot_tables(variants) };
-  auto   backward_counts { build_combination_counts(variants) };
-  size_t backward_rare { count_rare_combinations(backward_counts) };
-  size_t backward_combos { backward_counts.size() };
+  // Exploratory phase: forward and backward, each restarting from the
+  // strict baseline (never from pristine original), so it can only add to
+  // the strict phase's gains, never take them away.
+  auto forward_result { run_exploratory_direction(
+      variants, /*forward=*/true, groups, strict_tables) };
+  auto backward_result { run_exploratory_direction(
+      variants, /*forward=*/false, groups, strict_tables) };
 
   enum class winner_t
   {
-    before,
+    strict,
     forward,
     backward
   };
-  winner_t winner { winner_t::before };
-  size_t   best_rare { before_rare };
-  size_t   best_combos { before_combos };
+  winner_t winner { winner_t::strict };
+  size_t   best_rare { strict_rare };
+  size_t   best_combos { strict_combos };
 
   auto consider = [&](winner_t candidate, size_t rare, size_t combos)
   {
@@ -823,30 +1000,33 @@ void refine_rare_combinations(std::vector<file_variant> &variants)
     }
   };
 
-  consider(winner_t::forward, forward_rare, forward_combos);
-  consider(winner_t::backward, backward_rare, backward_combos);
+  consider(winner_t::forward, forward_result.rare, forward_result.combos);
+  consider(winner_t::backward, backward_result.rare, backward_result.combos);
 
   log_event("[combination refinement] Scores: before_rare: "
             + std::to_string(before_rare)
             + ", before_combos: " + std::to_string(before_combos)
-            + ", forward_rare: " + std::to_string(forward_rare)
-            + ", forward_combos: " + std::to_string(forward_combos)
-            + ", backward_rare: " + std::to_string(backward_rare)
-            + ", backward_combos: " + std::to_string(backward_combos));
+            + ", strict_rare: " + std::to_string(strict_rare)
+            + ", strict_combos: " + std::to_string(strict_combos)
+            + ", forward_rare: " + std::to_string(forward_result.rare)
+            + ", forward_combos: " + std::to_string(forward_result.combos)
+            + ", backward_rare: " + std::to_string(backward_result.rare)
+            + ", backward_combos: " + std::to_string(backward_result.combos));
 
   switch (winner)
   {
-    case winner_t::before :
-      restore_tables(variants, original_tables);
-      log_event("[combination refinement] kept original (no improving pass)");
+    case winner_t::strict :
+      restore_tables(variants, strict_tables);
+      log_event("[combination refinement] kept strict-only result (no "
+                "improving exploratory pass)");
       break;
     case winner_t::forward :
-      restore_tables(variants, forward_tables);
-      log_event("[combination refinement] kept forward pass result");
+      restore_tables(variants, forward_result.tables);
+      log_event("[combination refinement] kept forward exploratory result");
       break;
     case winner_t::backward :
-      restore_tables(variants, backward_tables);
-      log_event("[combination refinement] kept backward pass result");
+      restore_tables(variants, backward_result.tables);
+      log_event("[combination refinement] kept backward exploratory result");
       break;
   }
 
