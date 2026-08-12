@@ -11,6 +11,7 @@ std::string render_stage(pipeline_stage stage)
     case pipeline_stage::calculate_ngram_hashes :
       return "calculate_ngram_hashes";
     case pipeline_stage::align_file_variants : return "align_file_variants";
+    case pipeline_stage::iterative_refinement : return "iterative_refinement";
     case pipeline_stage::refine_rare_combinations :
       return "refine_rare_combinations";
     case pipeline_stage::apply_filler_size : return "apply_filler_size";

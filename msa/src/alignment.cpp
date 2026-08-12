@@ -812,6 +812,7 @@ void align_file_variants(std::vector<file_variant>& variants,
   }
   size_t executed_iterations { 0 };
   auto   refinement_start { std::chrono::steady_clock::now() };
+  stage_timer refinement_stage_timer(pipeline_stage::iterative_refinement);
   for (size_t iteration {}; iteration < kMaxRefinementIterations; ++iteration)
   {
     auto pass_start { std::chrono::steady_clock::now() };
@@ -837,9 +838,12 @@ void align_file_variants(std::vector<file_variant>& variants,
       }
       {
         std::ostringstream msg;
-        msg << "[refine_debug] pass " << iteration << " took " << pass_ms
+        msg << "pass took " << pass_ms
             << "ms, changed=" << (changed ? "yes" : "no");
-        log_event(msg.str());
+        report_progress(pipeline_stage::iterative_refinement,
+                        iteration + 1,
+                        kMaxRefinementIterations,
+                        msg.str());
       }
       if (!changed)
       {
@@ -851,9 +855,12 @@ void align_file_variants(std::vector<file_variant>& variants,
       double new_score { compute_alignment_score(variants, hash_count, cache) };
       {
         std::ostringstream msg;
-        msg << "[refine_debug] pass " << iteration << " took " << pass_ms
-            << "ms, score " << current_score << " -> " << new_score;
-        log_event(msg.str());
+        msg << "pass took " << pass_ms << "ms, score " << current_score
+            << " -> " << new_score;
+        report_progress(pipeline_stage::iterative_refinement,
+                        iteration + 1,
+                        kMaxRefinementIterations,
+                        msg.str());
       }
       if (new_score <= current_score)
       {
@@ -868,9 +875,9 @@ void align_file_variants(std::vector<file_variant>& variants,
                         std::chrono::steady_clock::now() - refinement_start)
                         .count() };
     std::ostringstream msg;
-    msg << "[refine_debug] refinement loop finished after "
-        << executed_iterations << "/" << kMaxRefinementIterations
-        << " iterations, total " << total_ms << "ms";
+    msg << "refinement loop finished after " << executed_iterations << "/"
+        << kMaxRefinementIterations << " iterations, total " << total_ms
+        << "ms";
     log_event(msg.str());
   }
 }

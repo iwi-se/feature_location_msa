@@ -8,6 +8,7 @@ enum class pipeline_stage
   build_token_tables,
   calculate_ngram_hashes,
   align_file_variants,
+  iterative_refinement,
   refine_rare_combinations,
   apply_filler_size,
   output
