@@ -684,18 +684,38 @@ namespace
 
       if (!any_option)
       {
+        log_event("[diag] column " + std::to_string(i + 1) + " (text="
+                  + anchor_text + ") is rare but no representative row has "
+                  "any candidate move; skipped before target search");
         continue;
       }
 
-      auto targets { wanted_targets(combination_counts,
-                                    anchor_state.present,
-                                    column_combination_size(anchor_state)) };
+      // Threshold for "wanted" targets is capped at the anchor's own current
+      // rarity count, not always kRarityThreshold: this lets a rare column
+      // move to another combination that's still rare but less rare than
+      // itself, not just to a fully non-rare one. is_rare() above guarantees
+      // combination_counts.at(processed_key) < kRarityThreshold already, so
+      // the min() is defensive, not load-bearing today.
+      size_t used_threshold { std::min(combination_counts.at(processed_key),
+                                       kRarityThreshold) };
+      auto   targets { wanted_targets(
+          combination_counts, anchor_state.present, used_threshold) };
+      size_t wanted_target_count { targets.size() };
 
       // Also try resolving the rare column by pushing it out entirely,
       // leaving it all-filler. All-filler columns are dropped later,
       // shortening the alignment, so evaluate_scenario awards this a
       // dominant score whenever it's reachable.
       targets.push_back(combination_key(rows, '0'));
+
+      if (wanted_target_count == 0)
+      {
+        log_event("[diag] column " + std::to_string(i + 1) + " (text="
+                  + anchor_text + ") is rare with candidates, but no "
+                  "non-rare target combination is within reach "
+                  "(hamming distance <= " + std::to_string(kMaxCombinationMismatches)
+                  + "); only the push-out fallback will be tried");
+      }
 
       bool            best_found { false };
       scenario_result best;
@@ -746,8 +766,19 @@ namespace
         }
       };
 
-      for (auto &target_key : targets)
+      // Diagnostics below are only emitted for the closest wanted target
+      // (targets[0], the one most likely to be "the obvious fix") and the
+      // push-out fallback (targets.back()), to avoid a log line per target
+      // when many are tried.
+      bool logged_closest_block { false };
+      bool logged_fallback_block { false };
+
+      for (size_t ti {}; ti < targets.size(); ++ti)
       {
+        auto  &target_key { targets[ti] };
+        bool   is_closest_target { wanted_target_count > 0 && ti == 0 };
+        bool   is_fallback_target { ti + 1 == targets.size() };
+
         // Branched on per representative only: since duplicate rows are
         // content-identical, required_action and target_key bits agree
         // across a whole group (see expand_group_moves), so a
@@ -777,6 +808,23 @@ namespace
           if (row_choices[ri].empty())
           {
             feasible = false; // required row has no matching candidate
+            if ((is_closest_target && !logged_closest_block)
+                || (is_fallback_target && !logged_fallback_block))
+            {
+              log_event(
+                  "[diag] column " + std::to_string(i + 1) + " (text="
+                  + anchor_text + "): "
+                  + (is_closest_target ? "closest wanted target"
+                                       : "push-out fallback target")
+                  + " unreachable — representative row " + std::to_string(r)
+                  + " needs a " + (want_pull ? "pull" : "push")
+                  + " but has 0 matching candidates ("
+                  + std::to_string(options[ri].empty() ? 0
+                                                        : options[ri].size() - 1)
+                  + " candidate(s) of the wrong kind available)");
+              logged_closest_block  |= is_closest_target;
+              logged_fallback_block |= is_fallback_target;
+            }
           }
         }
 
@@ -830,6 +878,11 @@ namespace
 
       if (!best_found)
       {
+        log_event("[diag] column " + std::to_string(i + 1) + " (text="
+                  + anchor_text + "): no scenario accepted — tried "
+                  + std::to_string(wanted_target_count) + " wanted target(s) + "
+                  "push-out fallback, all infeasible or rejected by mode="
+                  + (mode == scenario_mode::strict ? "strict" : "exploratory"));
         continue;
       }
 
