@@ -630,19 +630,23 @@ void align_profile_to_sequence(const std::vector<token_table*>&    profile_rows,
   sequence = std::move(aligned_sequence);
 }
 
-// Total alignment quality across all variants: for each column, scores
-// every row's non-filler token against the *other* rows at that column
-// (leave-one-out), summed over every column and row. Used as the
-// convergence measure for iterative refinement.
+// Total alignment quality across all *distinct* variants: for each column,
+// scores every row's non-filler token against the *other* rows at that
+// column (leave-one-out), summed over every column and row. Used as the
+// convergence measure for iterative refinement. Restricted to
+// `distinct_indices` (see group_variants_by_ast): duplicate rows are
+// byte-identical to their representative, so scoring them again would add
+// nothing but O(duplicates) cost.
 double compute_alignment_score(std::vector<file_variant>&          variants,
+                               const std::vector<size_t>&          distinct_indices,
                                const hash_count&                   hash_count,
                                std::unordered_map<size_t, double>& cache)
 {
   std::vector<token_table*> all_sequences;
-  all_sequences.reserve(variants.size());
-  for (auto& variant : variants)
+  all_sequences.reserve(distinct_indices.size());
+  for (size_t idx : distinct_indices)
   {
-    all_sequences.push_back(&(*variant.m_token_table));
+    all_sequences.push_back(&(*variants[idx].m_token_table));
   }
 
   if (all_sequences.empty())
@@ -683,24 +687,29 @@ double compute_alignment_score(std::vector<file_variant>&          variants,
   return total;
 }
 
+// Snapshots/restores only `indices` (typically distinct_indices): duplicate
+// rows aren't touched by the refinement loop, so there's nothing to save or
+// roll back for them.
 std::vector<token_table>
-    snapshot_token_tables(const std::vector<file_variant>& variants)
+    snapshot_token_tables(const std::vector<file_variant>& variants,
+                          const std::vector<size_t>&       indices)
 {
   std::vector<token_table> snapshot;
-  snapshot.reserve(variants.size());
-  for (const auto& variant : variants)
+  snapshot.reserve(indices.size());
+  for (size_t idx : indices)
   {
-    snapshot.push_back(*variant.m_token_table);
+    snapshot.push_back(*variants[idx].m_token_table);
   }
   return snapshot;
 }
 
 void restore_token_tables(std::vector<file_variant>& variants,
+                          const std::vector<size_t>& indices,
                           std::vector<token_table>&  snapshot)
 {
-  for (size_t i {}; i < variants.size(); ++i)
+  for (size_t k {}; k < indices.size(); ++k)
   {
-    *variants[i].m_token_table = std::move(snapshot[i]);
+    *variants[indices[k]].m_token_table = std::move(snapshot[k]);
   }
 }
 
@@ -808,7 +817,8 @@ void align_file_variants(std::vector<file_variant>& variants,
   double           current_score {};
   if constexpr (kRefinementStopMode == refinement_stop_mode::score_based)
   {
-    current_score = compute_alignment_score(variants, hash_count, cache);
+    current_score
+        = compute_alignment_score(variants, distinct_indices, hash_count, cache);
   }
   size_t executed_iterations { 0 };
   auto   refinement_start { std::chrono::steady_clock::now() };
@@ -816,9 +826,9 @@ void align_file_variants(std::vector<file_variant>& variants,
   for (size_t iteration {}; iteration < kMaxRefinementIterations; ++iteration)
   {
     auto pass_start { std::chrono::steady_clock::now() };
-    auto snapshot { snapshot_token_tables(variants) };
+    auto snapshot { snapshot_token_tables(variants, distinct_indices) };
 
-    refine_alignment(variants, hash_count, cache);
+    refine_alignment(variants, distinct_indices, hash_count, cache);
 
     ++executed_iterations;
     auto pass_ms { std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -828,9 +838,9 @@ void align_file_variants(std::vector<file_variant>& variants,
     if constexpr (kRefinementStopMode == refinement_stop_mode::no_change)
     {
       bool changed { false };
-      for (size_t i {}; i < variants.size(); ++i)
+      for (size_t k {}; k < distinct_indices.size(); ++k)
       {
-        if (*variants[i].m_token_table != snapshot[i])
+        if (*variants[distinct_indices[k]].m_token_table != snapshot[k])
         {
           changed = true;
           break;
@@ -852,7 +862,8 @@ void align_file_variants(std::vector<file_variant>& variants,
     }
     else
     {
-      double new_score { compute_alignment_score(variants, hash_count, cache) };
+      double new_score { compute_alignment_score(
+          variants, distinct_indices, hash_count, cache) };
       {
         std::ostringstream msg;
         msg << "pass took " << pass_ms << "ms, score " << current_score
@@ -864,12 +875,25 @@ void align_file_variants(std::vector<file_variant>& variants,
       }
       if (new_score <= current_score)
       {
-        restore_token_tables(variants, snapshot);
+        restore_token_tables(variants, distinct_indices, snapshot);
         break;
       }
       current_score = new_score;
     }
   }
+
+  // Duplicates never went through the refinement loop above (it only ever
+  // touches distinct_indices), so propagate each representative's
+  // post-refinement table to its duplicate rows, same as the seed/merge
+  // phase above.
+  for (const auto& [row, rep] : groups.representative_of)
+  {
+    if (row != rep)
+    {
+      variants[row].m_token_table = variants[rep].m_token_table;
+    }
+  }
+
   {
     auto total_ms { std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now() - refinement_start)
@@ -923,14 +947,15 @@ std::vector<bool>
 }
 
 void refine_alignment(std::vector<file_variant>&          variants,
+                      const std::vector<size_t>&          distinct_indices,
                       const hash_count&                   hash_count,
                       std::unordered_map<size_t, double>& cache)
 {
-  for (size_t i {}; i < variants.size(); ++i)
+  for (size_t i : distinct_indices)
   {
     std::vector<token_table*> other_sequences {};
-    other_sequences.reserve(variants.size() - 1);
-    for (size_t j {}; j < variants.size(); ++j)
+    other_sequences.reserve(distinct_indices.size() - 1);
+    for (size_t j : distinct_indices)
     {
       if (j != i)
       {
