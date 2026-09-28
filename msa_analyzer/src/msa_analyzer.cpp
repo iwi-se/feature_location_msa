@@ -1070,6 +1070,29 @@ std::string clause_literals_key(const and_clause_literals_t &clause)
   return result;
 }
 
+// Canonical, order-independent string signature of a parsed parent-context
+// clause list, for use as (part of) a cache key.
+std::string
+    parent_clauses_signature(const std::vector<and_clause_literals_t> &clauses)
+{
+  std::vector<std::string> clause_keys {};
+  for (const auto &clause : clauses)
+  {
+    clause_keys.push_back(clause_literals_key(clause));
+  }
+  std::sort(clause_keys.begin(), clause_keys.end());
+  std::string result {};
+  for (size_t i {}; i < clause_keys.size(); ++i)
+  {
+    if (i > 0)
+    {
+      result += "_or_";
+    }
+    result += clause_keys[i];
+  }
+  return result;
+}
+
 // Picks the raw candidate that best refines parent_clauses, where
 // parent_clauses is the already-split list of OR-clauses of the (DNF)
 // surrounding scope's feature.
@@ -1461,6 +1484,16 @@ void analyze(operation_t op)
     // columns are fully resolved for the whole file first (class before
     // method), and every other column is only resolved afterwards, once all
     // identifier context is available regardless of relative column order.
+    // Memoizes the whole disambiguation decision, not just the string
+    // parsing that feeds it: columns within the same refinement block
+    // routinely share both the same present-systems combination (so the
+    // exact same candidate list) and the same enclosing class/method (so the
+    // exact same parent context), in which case pick_best_candidate_index_by_or_structure
+    // would otherwise redo its full O(candidates * parent_clauses *
+    // candidate_clauses) scoring pass for an identical input it has already
+    // solved. thread_local for the same reason as the caches above: reuse
+    // only ever happens within one file/thread, and a shared cache would
+    // need locking that serializes the parallel pipeline for no benefit.
     auto pick_chosen_raw = [&](const column_info_t &info,
                                const std::vector<and_clause_literals_t>
                                    &parent_clauses) -> std::string
@@ -1469,8 +1502,17 @@ void analyze(operation_t op)
       {
         return info.candidates.front();
       }
-      return info.candidates[pick_best_candidate_index_by_or_structure(
-          info.candidates, parent_clauses)];
+
+      thread_local std::map<std::string, std::string> decision_cache {};
+      std::string key { hash_systems(info.present) + "|"
+                        + parent_clauses_signature(parent_clauses) };
+      auto [it, inserted] { decision_cache.try_emplace(key) };
+      if (inserted)
+      {
+        it->second = info.candidates[pick_best_candidate_index_by_or_structure(
+            info.candidates, parent_clauses)];
+      }
+      return it->second;
     };
 
     for (auto &info : columns_info)
