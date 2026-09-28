@@ -913,14 +913,17 @@ std::vector<and_clause_literals_t>
 // feature string (e.g. a class's or method's ->feature) is looked up again
 // for every column owned by that class/method, and this parsing is pure, so
 // caching it avoids re-splitting/re-parsing an unchanged string over and
-// over. Thread-safe: analyze() processes files in parallel.
+// over. The cache is thread_local rather than shared: analyze() processes
+// files in parallel, one thread per file, and the reuse this is chasing only
+// ever happens between columns of the same file (handled by one thread
+// anyway) — a shared cache would need a mutex around every lookup and would
+// only serialize the parallel pipeline for no cross-thread benefit.
 const std::vector<and_clause_literals_t> &
     clause_literal_sets_cached(const std::string &transformed_dnf)
 {
-  static std::map<std::string, std::vector<and_clause_literals_t>> cache {};
-  static std::mutex                                                cache_mutex {};
+  thread_local std::map<std::string, std::vector<and_clause_literals_t>>
+      cache {};
 
-  std::lock_guard lock { cache_mutex };
   auto [it, inserted] { cache.try_emplace(transformed_dnf) };
   if (inserted)
   {
@@ -933,14 +936,14 @@ const std::vector<and_clause_literals_t> &
 // candidate lists are cached and reused across many columns that share the
 // same present-systems combination (see get_feature_candidates_from_systems
 // below), so the same raw candidate string is parsed here repeatedly unless
-// cached. Thread-safe: analyze() processes files in parallel.
+// cached. thread_local for the same reason as clause_literal_sets_cached
+// above.
 const std::vector<and_clause_literals_t> &
     candidate_clauses_cached(const std::string &raw_candidate)
 {
-  static std::map<std::string, std::vector<and_clause_literals_t>> cache {};
-  static std::mutex                                                cache_mutex {};
+  thread_local std::map<std::string, std::vector<and_clause_literals_t>>
+      cache {};
 
-  std::lock_guard lock { cache_mutex };
   auto [it, inserted] { cache.try_emplace(raw_candidate) };
   if (inserted)
   {
