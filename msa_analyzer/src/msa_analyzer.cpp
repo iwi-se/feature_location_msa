@@ -43,6 +43,28 @@ void replace_all(std::string       &str,
   }
 }
 
+// Diagnostic only: current resident set size of this process, in KB, read
+// from /proc/self/status. Used to locate where analyze()'s memory growth
+// actually comes from.
+long long current_rss_kb()
+{
+  std::ifstream status { "/proc/self/status" };
+  std::string   line {};
+  while (std::getline(status, line))
+  {
+    if (line.starts_with("VmRSS:"))
+    {
+      std::istringstream iss { line.substr(6) };
+      long long          kb {};
+      iss >> kb;
+      return kb;
+    }
+  }
+  return -1;
+}
+
+std::mutex diagnostic_print_mutex {};
+
 struct alignment_token_t
 {
     enum class token_kind_t
@@ -1338,6 +1360,8 @@ std::string get_feature_from_systems(const std::vector<size_t> &systems,
 
 void analyze(operation_t op)
 {
+  std::cout << "[mem] at start: RSS=" << current_rss_kb() << " KB\n";
+
   std::string output_directory { "output" };
   if (!std::filesystem::exists(output_directory))
   {
@@ -1589,6 +1613,33 @@ void analyze(operation_t op)
       std::lock_guard lock { accumulator_mutex };
       accumulator[feat].insert_many(lines);
     }
+
+    size_t total_candidates {};
+    for (const auto &info : columns_info)
+    {
+      total_candidates += info.candidates.size();
+    }
+    size_t accumulator_entries {};
+    size_t accumulator_lines {};
+    {
+      std::lock_guard lock { accumulator_mutex };
+      accumulator_entries = accumulator.size();
+      for (const auto &[feat, lines] : accumulator)
+      {
+        accumulator_lines += lines.class_lines.size() + lines.method_lines.size()
+                            + lines.refinement_lines.size();
+      }
+    }
+    {
+      std::lock_guard lock { diagnostic_print_mutex };
+      std::cout << "[mem] after " << msa_file_path.filename().string()
+                << ": RSS=" << current_rss_kb() << " KB"
+                << ", columns=" << columns_info.size()
+                << ", total_candidates=" << total_candidates
+                << ", nodes_by_feature=" << nodes_by_feature.size()
+                << ", accumulator_entries=" << accumulator_entries
+                << ", accumulator_lines=" << accumulator_lines << "\n";
+    }
   };
 
   if (std::filesystem::is_directory(op.msa_path))
@@ -1628,12 +1679,18 @@ void analyze(operation_t op)
     process_one_file(op.msa_path);
   }
 
+  std::cout << "[mem] after all files processed, before writing output: RSS="
+            << current_rss_kb() << " KB\n";
+
   for (auto &[feat, lines] : accumulator)
   {
     std::string   sanitized { std::regex_replace(feat, std::regex(" "), "_") };
     std::ofstream out(output_directory + "/" + sanitized + ".txt");
     out << lines.render();
   }
+
+  std::cout << "[mem] after writing output: RSS=" << current_rss_kb()
+            << " KB\n";
 }
 
 void render(operation_t op)
