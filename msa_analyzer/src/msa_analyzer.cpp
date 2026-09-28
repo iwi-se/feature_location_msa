@@ -1208,101 +1208,14 @@ void analyze(operation_t op)
       }
     };
 
-    // Disambiguate ambiguous system-combinations using the ArgoUML trace
-    // hierarchy. A class trace has no parent and is never disambiguated; a
-    // method trace is disambiguated against its enclosing class's trace;
-    // anything else (refinement-line-contributing tokens) is disambiguated
-    // against its enclosing method's trace, falling back to its enclosing
-    // class's trace. Column order is source-document order, but modifiers,
-    // annotations, and keywords that precede a class/method's own identifier
-    // token are still structurally inside that class/method and would be
-    // visited *before* the identifier's column resolves it — so identifier
-    // columns are fully resolved for the whole file first (class before
-    // method), and every other column is only resolved afterwards, once all
-    // identifier context is available regardless of relative column order.
+    // Candidate disambiguation (pick_best_candidate_index against ArgoUML
+    // trace hierarchy context) is disabled for now due to unexpected
+    // results; just take the first candidate, as get_feature_from_systems
+    // does. The disambiguation logic is kept in place in case it is
+    // re-enabled later.
     for (auto &info : columns_info)
     {
-      if (is_class_identifier(info.owner_node))
-      {
-        finalize_column(info, info.candidates.front());
-      }
-    }
-    for (auto &info : columns_info)
-    {
-      if (!is_method_identifier(info.owner_node))
-      {
-        continue;
-      }
-      std::string chosen_raw { info.candidates.front() };
-      if (info.candidates.size() > 1)
-      {
-        std::set<std::string> parent_context {};
-        auto class_node { get_parent_class_node(info.owner_node) };
-        auto class_id { class_node == nullptr
-                            ? nullptr
-                            : class_node->get_child_by_tag("identifier") };
-        if (class_id != nullptr && !class_id->feature.empty())
-        {
-          parent_context = literal_union(class_id->feature);
-        }
-        chosen_raw = info.candidates[pick_best_candidate_index(info.candidates,
-                                                               parent_context)];
-      }
-      finalize_column(info, chosen_raw);
-    }
-    for (auto &info : columns_info)
-    {
-      if (is_class_identifier(info.owner_node)
-          || is_method_identifier(info.owner_node))
-      {
-        continue;
-      }
-      std::string chosen_raw { info.candidates.front() };
-      if (info.candidates.size() > 1)
-      {
-        std::set<std::string> parent_context {};
-        auto method_node { get_parent_method_node(info.owner_node) };
-        auto method_id { method_node == nullptr
-                             ? nullptr
-                             : method_node->get_child_by_tag("identifier") };
-        if (method_id != nullptr && !method_id->feature.empty())
-        {
-          parent_context = literal_union(method_id->feature);
-        }
-        else
-        {
-          auto class_node { get_parent_class_node(info.owner_node) };
-          auto class_id { class_node == nullptr
-                              ? nullptr
-                              : class_node->get_child_by_tag("identifier") };
-          if (class_id != nullptr && !class_id->feature.empty())
-          {
-            parent_context = literal_union(class_id->feature);
-          }
-          else if (class_node == nullptr)
-          {
-            // Genuinely top-level token (e.g. an import declaration) with no
-            // enclosing class or method at all. find_refinement_traces'
-            // import special-case broadcasts such a token's resolved feature
-            // to every top-level class in the file, so use the union of
-            // those classes' already-resolved traces as context.
-            for (const auto &top_level_class :
-                 get_top_level_class_nodes(systems.at(info.owner_sys).root))
-            {
-              auto top_level_id { top_level_class->get_child_by_tag(
-                  "identifier") };
-              if (top_level_id != nullptr && !top_level_id->feature.empty())
-              {
-                auto literals { literal_union(top_level_id->feature) };
-                parent_context.insert(literals.begin(), literals.end());
-              }
-            }
-          }
-        }
-        chosen_raw = info.candidates[pick_best_candidate_index(info.candidates,
-                                                               parent_context)];
-      }
-      finalize_column(info, chosen_raw);
+      finalize_column(info, info.candidates.front());
     }
 
     for (auto &[feat, nodes] : nodes_by_feature)
