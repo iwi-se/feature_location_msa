@@ -909,6 +909,46 @@ std::vector<and_clause_literals_t>
   return result;
 }
 
+// Memoizes clause_literal_sets(transformed_dnf): the same already-resolved
+// feature string (e.g. a class's or method's ->feature) is looked up again
+// for every column owned by that class/method, and this parsing is pure, so
+// caching it avoids re-splitting/re-parsing an unchanged string over and
+// over. Thread-safe: analyze() processes files in parallel.
+const std::vector<and_clause_literals_t> &
+    clause_literal_sets_cached(const std::string &transformed_dnf)
+{
+  static std::map<std::string, std::vector<and_clause_literals_t>> cache {};
+  static std::mutex                                                cache_mutex {};
+
+  std::lock_guard lock { cache_mutex };
+  auto [it, inserted] { cache.try_emplace(transformed_dnf) };
+  if (inserted)
+  {
+    it->second = clause_literal_sets(transformed_dnf);
+  }
+  return it->second;
+}
+
+// Memoizes clause_literal_sets(transform_dnf_feature(raw_candidate)): raw
+// candidate lists are cached and reused across many columns that share the
+// same present-systems combination (see get_feature_candidates_from_systems
+// below), so the same raw candidate string is parsed here repeatedly unless
+// cached. Thread-safe: analyze() processes files in parallel.
+const std::vector<and_clause_literals_t> &
+    candidate_clauses_cached(const std::string &raw_candidate)
+{
+  static std::map<std::string, std::vector<and_clause_literals_t>> cache {};
+  static std::mutex                                                cache_mutex {};
+
+  std::lock_guard lock { cache_mutex };
+  auto [it, inserted] { cache.try_emplace(raw_candidate) };
+  if (inserted)
+  {
+    it->second = clause_literal_sets(transform_dnf_feature(raw_candidate));
+  }
+  return it->second;
+}
+
 // Union of the positive literals across all OR-clauses of a
 // transform_dnf_feature-canonicalized DNF string.
 std::set<std::string> literal_union(const std::string &transformed_dnf)
@@ -1071,8 +1111,8 @@ size_t pick_best_candidate_index_by_or_structure(
 
   for (size_t i {}; i < raw_candidates.size(); ++i)
   {
-    std::vector<and_clause_literals_t> candidate_clauses {
-        clause_literal_sets(transform_dnf_feature(raw_candidates[i])) };
+    const std::vector<and_clause_literals_t> &candidate_clauses {
+        candidate_clauses_cached(raw_candidates[i]) };
 
     // For every extra key seen, how many distinct parent clauses it covers,
     // and which candidate clause indices realize that coverage.
@@ -1450,7 +1490,7 @@ void analyze(operation_t op)
                           : class_node->get_child_by_tag("identifier") };
       if (class_id != nullptr && !class_id->feature.empty())
       {
-        parent_clauses = clause_literal_sets(class_id->feature);
+        parent_clauses = clause_literal_sets_cached(class_id->feature);
       }
       finalize_column(info, pick_chosen_raw(info, parent_clauses));
     }
@@ -1468,7 +1508,7 @@ void analyze(operation_t op)
                            : method_node->get_child_by_tag("identifier") };
       if (method_id != nullptr && !method_id->feature.empty())
       {
-        parent_clauses = clause_literal_sets(method_id->feature);
+        parent_clauses = clause_literal_sets_cached(method_id->feature);
       }
       else
       {
@@ -1478,7 +1518,7 @@ void analyze(operation_t op)
                             : class_node->get_child_by_tag("identifier") };
         if (class_id != nullptr && !class_id->feature.empty())
         {
-          parent_clauses = clause_literal_sets(class_id->feature);
+          parent_clauses = clause_literal_sets_cached(class_id->feature);
         }
         else if (class_node == nullptr)
         {
@@ -1496,7 +1536,7 @@ void analyze(operation_t op)
                 "identifier") };
             if (top_level_id != nullptr && !top_level_id->feature.empty())
             {
-              auto clauses { clause_literal_sets(top_level_id->feature) };
+              auto clauses { clause_literal_sets_cached(top_level_id->feature) };
               parent_clauses.insert(
                   parent_clauses.end(), clauses.begin(), clauses.end());
             }
