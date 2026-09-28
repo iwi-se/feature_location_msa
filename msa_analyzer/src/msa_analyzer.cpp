@@ -1420,13 +1420,18 @@ void analyze(operation_t op)
     std::map<std::string, std::vector<std::shared_ptr<node_t>>>
         nodes_by_feature {};
 
+    // Deliberately does not store the candidate list: for a given systems
+    // combination it is the same (often very large) vector<string> for
+    // every column that shares it, and copying it once per column could
+    // multiply memory by the number of such columns. get_feature_candidates_from_systems(present, op)
+    // is a cheap cached lookup returning a reference, so callers fetch it
+    // on demand instead.
     struct column_info_t
     {
-        size_t                   col;
-        std::vector<size_t>      present;
-        std::vector<std::string> candidates;
-        std::shared_ptr<node_t>  owner_node;
-        size_t                   owner_sys;
+        size_t                  col;
+        std::vector<size_t>     present;
+        std::shared_ptr<node_t> owner_node;
+        size_t                  owner_sys;
     };
 
     std::vector<column_info_t> columns_info {};
@@ -1445,9 +1450,6 @@ void analyze(operation_t op)
       {
         continue;
       }
-      std::vector<std::string> candidates { get_feature_candidates_from_systems(
-          present, op) };
-
       bool                    has_owner { false };
       size_t                  best_score {};
       size_t                  owner_sys {};
@@ -1466,11 +1468,8 @@ void analyze(operation_t op)
         }
       }
 
-      columns_info.push_back({ col,
-                               std::move(present),
-                               std::move(candidates),
-                               owner_node,
-                               owner_sys });
+      columns_info.push_back(
+          { col, std::move(present), owner_node, owner_sys });
     }
 
     auto finalize_column
@@ -1513,9 +1512,11 @@ void analyze(operation_t op)
                                const std::vector<and_clause_literals_t>
                                    &parent_clauses) -> std::string
     {
-      if (info.candidates.size() <= 1 || parent_clauses.empty())
+      const std::vector<std::string> &candidates {
+          get_feature_candidates_from_systems(info.present, op) };
+      if (candidates.size() <= 1 || parent_clauses.empty())
       {
-        return info.candidates.front();
+        return candidates.front();
       }
 
       thread_local std::map<std::string, std::string> decision_cache {};
@@ -1524,8 +1525,8 @@ void analyze(operation_t op)
       auto [it, inserted] { decision_cache.try_emplace(key) };
       if (inserted)
       {
-        it->second = info.candidates[pick_best_candidate_index_by_or_structure(
-            info.candidates, parent_clauses)];
+        it->second = candidates[pick_best_candidate_index_by_or_structure(
+            candidates, parent_clauses)];
       }
       return it->second;
     };
@@ -1534,7 +1535,9 @@ void analyze(operation_t op)
     {
       if (is_class_identifier(info.owner_node))
       {
-        finalize_column(info, info.candidates.front());
+        finalize_column(
+            info,
+            get_feature_candidates_from_systems(info.present, op).front());
       }
     }
     for (auto &info : columns_info)
@@ -1617,7 +1620,8 @@ void analyze(operation_t op)
     size_t total_candidates {};
     for (const auto &info : columns_info)
     {
-      total_candidates += info.candidates.size();
+      total_candidates
+          += get_feature_candidates_from_systems(info.present, op).size();
     }
     size_t accumulator_entries {};
     size_t accumulator_lines {};
