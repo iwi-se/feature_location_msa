@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -43,65 +42,6 @@ void replace_all(std::string       &str,
     start_pos += to.length(); // move past the replaced part
   }
 }
-
-// Coarse diagnostic counters for the `analyze` command, to see where wall
-// time is actually going instead of guessing. All durations are summed
-// CPU-nanoseconds across whatever threads touch them (comparable to `user`
-// time, not `real` time), since analyze() runs per-file work in parallel.
-namespace timing_stats
-{
-std::atomic<long long> candidate_gen_ns { 0 };
-std::atomic<size_t>    candidate_cache_hits { 0 };
-std::atomic<size_t>    candidate_cache_misses { 0 };
-
-std::atomic<long long> matching_ns { 0 };
-std::atomic<size_t>    decision_cache_hits { 0 };
-std::atomic<size_t>    decision_cache_misses { 0 };
-
-std::atomic<size_t> parent_parse_cache_hits { 0 };
-std::atomic<size_t> parent_parse_cache_misses { 0 };
-std::atomic<size_t> candidate_parse_cache_hits { 0 };
-std::atomic<size_t> candidate_parse_cache_misses { 0 };
-
-std::atomic<long long> file_parse_ns { 0 };
-std::atomic<long long> output_build_ns { 0 };
-
-void print_and_reset()
-{
-  std::cout << "\n--- analyze() timing breakdown (summed across threads) ---\n"
-            << "file parsing (parse_file_msa):      "
-            << file_parse_ns.load() / 1'000'000 << " ms\n"
-            << "candidate generation (isolation/lookup): "
-            << candidate_gen_ns.load() / 1'000'000 << " ms"
-            << "  [cache hits=" << candidate_cache_hits.load()
-            << ", misses=" << candidate_cache_misses.load() << "]\n"
-            << "disambiguation matching:            "
-            << matching_ns.load() / 1'000'000 << " ms"
-            << "  [decision cache hits=" << decision_cache_hits.load()
-            << ", misses=" << decision_cache_misses.load() << "]\n"
-            << "  parent-clause parse cache:  hits=" << parent_parse_cache_hits.load()
-            << ", misses=" << parent_parse_cache_misses.load() << "\n"
-            << "  candidate-clause parse cache: hits="
-            << candidate_parse_cache_hits.load()
-            << ", misses=" << candidate_parse_cache_misses.load() << "\n"
-            << "output formatting (build_argouml_benchmark_format_for_file): "
-            << output_build_ns.load() / 1'000'000 << " ms\n"
-            << "-----------------------------------------------------------\n";
-
-  candidate_gen_ns           = 0;
-  candidate_cache_hits       = 0;
-  candidate_cache_misses     = 0;
-  matching_ns                = 0;
-  decision_cache_hits        = 0;
-  decision_cache_misses      = 0;
-  parent_parse_cache_hits    = 0;
-  parent_parse_cache_misses  = 0;
-  candidate_parse_cache_hits = 0;
-  candidate_parse_cache_misses = 0;
-  file_parse_ns              = 0;
-  output_build_ns            = 0;
-}
-} // namespace timing_stats
 
 struct alignment_token_t
 {
@@ -987,41 +927,7 @@ const std::vector<and_clause_literals_t> &
   auto [it, inserted] { cache.try_emplace(transformed_dnf) };
   if (inserted)
   {
-    timing_stats::parent_parse_cache_misses.fetch_add(1,
-                                                       std::memory_order_relaxed);
     it->second = clause_literal_sets(transformed_dnf);
-  }
-  else
-  {
-    timing_stats::parent_parse_cache_hits.fetch_add(1,
-                                                     std::memory_order_relaxed);
-  }
-  return it->second;
-}
-
-// Memoizes clause_literal_sets(transform_dnf_feature(raw_candidate)): raw
-// candidate lists are cached and reused across many columns that share the
-// same present-systems combination (see get_feature_candidates_from_systems
-// below), so the same raw candidate string is parsed here repeatedly unless
-// cached. thread_local for the same reason as clause_literal_sets_cached
-// above.
-const std::vector<and_clause_literals_t> &
-    candidate_clauses_cached(const std::string &raw_candidate)
-{
-  thread_local std::map<std::string, std::vector<and_clause_literals_t>>
-      cache {};
-
-  auto [it, inserted] { cache.try_emplace(raw_candidate) };
-  if (inserted)
-  {
-    timing_stats::candidate_parse_cache_misses.fetch_add(
-        1, std::memory_order_relaxed);
-    it->second = clause_literal_sets(transform_dnf_feature(raw_candidate));
-  }
-  else
-  {
-    timing_stats::candidate_parse_cache_hits.fetch_add(1,
-                                                        std::memory_order_relaxed);
   }
   return it->second;
 }
@@ -1211,8 +1117,8 @@ size_t pick_best_candidate_index_by_or_structure(
 
   for (size_t i {}; i < raw_candidates.size(); ++i)
   {
-    const std::vector<and_clause_literals_t> &candidate_clauses {
-        candidate_clauses_cached(raw_candidates[i]) };
+    std::vector<and_clause_literals_t> candidate_clauses {
+        clause_literal_sets(transform_dnf_feature(raw_candidates[i])) };
 
     // For every extra key seen, how many distinct parent clauses it covers,
     // and which candidate clause indices realize that coverage.
@@ -1374,17 +1280,16 @@ std::string hash_systems(const std::vector<size_t> &systems)
   return result;
 }
 
-// Returns a reference into the cache rather than a copy: system_feature_map
-// only ever grows (entries are inserted once and never modified or erased),
-// and std::map guarantees that inserting new keys never invalidates
-// references to existing elements. So the mutex only needs to guard the
-// find-or-insert against concurrent structural changes to the map, not
-// reads of an already-inserted value — letting cache hits (the overwhelming
-// majority of calls) avoid copying a potentially large vector<string> while
+// Returns a reference rather than a copy: system_feature_map only caches
+// exec_and_capture results (see below), where caching genuinely saves an
+// expensive external process spawn. It only ever grows (entries are
+// inserted once and never modified or erased), and std::map guarantees that
+// inserting new keys never invalidates references to existing elements. So
+// the mutex only needs to guard the find-or-insert against concurrent
+// structural changes to the map, not reads of an already-inserted value —
+// letting cache hits avoid copying a potentially large vector<string> while
 // holding a single mutex shared by every thread in the pool, which was
-// previously a severe contention bottleneck (verified via profiling: this
-// function's cache-hit path alone summed to ~40x wall-clock time across
-// threads for a run that was ~99.997% cache hits).
+// previously a severe contention bottleneck.
 const std::vector<std::string> &
     get_feature_candidates_from_systems(const std::vector<size_t> &systems,
                                         const operation_t         &operation)
@@ -1398,27 +1303,27 @@ const std::vector<std::string> &
     auto            it { system_feature_map.find(systems_hash) };
     if (it != system_feature_map.end())
     {
-      timing_stats::candidate_cache_hits.fetch_add(1, std::memory_order_relaxed);
       return it->second;
     }
   }
-  timing_stats::candidate_cache_misses.fetch_add(1, std::memory_order_relaxed);
 
-  std::vector<std::string> result {};
-  auto                     lookup_it { operation.feature_expression_lookup.find(
+  // operation.feature_expression_lookup is already a full table resident in
+  // memory for the whole run, and looking it up is already a cheap in-memory
+  // find() — so unlike the exec_and_capture branch below, there's nothing to
+  // gain by copying its result into a second permanent cache under a
+  // different key. Return a reference straight into the table instead.
+  auto lookup_it { operation.feature_expression_lookup.find(
       canonical_systems_key(systems)) };
   if (lookup_it != operation.feature_expression_lookup.end())
   {
-    result = lookup_it->second;
+    return lookup_it->second;
   }
-  else
-  {
-    std::string isolation_call { build_isolation_call(operation,
-                                                      systems_hash) };
-    std::string exec_result { exec_and_capture(isolation_call) };
-    exec_result.pop_back();
-    result.push_back(exec_result);
-  }
+
+  std::string isolation_call { build_isolation_call(operation, systems_hash) };
+  std::string exec_result { exec_and_capture(isolation_call) };
+  exec_result.pop_back();
+  std::vector<std::string> result {};
+  result.push_back(exec_result);
 
   std::lock_guard lock { cache_mutex };
   return system_feature_map.try_emplace(systems_hash, std::move(result))
@@ -1457,14 +1362,8 @@ void analyze(operation_t op)
   auto process_one_file = [op, &accumulator, &accumulator_mutex](
                               const std::filesystem::path &msa_file_path)
   {
-    auto parse_start { std::chrono::steady_clock::now() };
     auto [spl_file, systems] = parse_file_msa(
         msa_file_path, op.atomic_node_types, op.variant_name_to_system_id);
-    timing_stats::file_parse_ns.fetch_add(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now() - parse_start)
-            .count(),
-        std::memory_order_relaxed);
 
     if (systems.empty())
     {
@@ -1522,14 +1421,8 @@ void analyze(operation_t op)
       {
         continue;
       }
-      auto candidate_gen_start { std::chrono::steady_clock::now() };
       std::vector<std::string> candidates { get_feature_candidates_from_systems(
           present, op) };
-      timing_stats::candidate_gen_ns.fetch_add(
-          std::chrono::duration_cast<std::chrono::nanoseconds>(
-              std::chrono::steady_clock::now() - candidate_gen_start)
-              .count(),
-          std::memory_order_relaxed);
 
       bool                    has_owner { false };
       size_t                  best_score {};
@@ -1607,21 +1500,8 @@ void analyze(operation_t op)
       auto [it, inserted] { decision_cache.try_emplace(key) };
       if (inserted)
       {
-        timing_stats::decision_cache_misses.fetch_add(1,
-                                                       std::memory_order_relaxed);
-        auto matching_start { std::chrono::steady_clock::now() };
         it->second = info.candidates[pick_best_candidate_index_by_or_structure(
             info.candidates, parent_clauses)];
-        timing_stats::matching_ns.fetch_add(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now() - matching_start)
-                .count(),
-            std::memory_order_relaxed);
-      }
-      else
-      {
-        timing_stats::decision_cache_hits.fetch_add(1,
-                                                     std::memory_order_relaxed);
       }
       return it->second;
     };
@@ -1702,7 +1582,6 @@ void analyze(operation_t op)
       finalize_column(info, pick_chosen_raw(info, parent_clauses));
     }
 
-    auto output_build_start { std::chrono::steady_clock::now() };
     for (auto &[feat, nodes] : nodes_by_feature)
     {
       output_lines_t  lines { build_argouml_benchmark_format_for_file(
@@ -1710,18 +1589,10 @@ void analyze(operation_t op)
       std::lock_guard lock { accumulator_mutex };
       accumulator[feat].insert_many(lines);
     }
-    timing_stats::output_build_ns.fetch_add(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now() - output_build_start)
-            .count(),
-        std::memory_order_relaxed);
   };
-
-  auto wall_start { std::chrono::steady_clock::now() };
 
   if (std::filesystem::is_directory(op.msa_path))
   {
-    auto                                discovery_start { std::chrono::steady_clock::now() };
     std::vector<std::filesystem::path> files {};
     for (const auto &entry : std::filesystem::directory_iterator(op.msa_path))
     {
@@ -1737,11 +1608,6 @@ void analyze(operation_t op)
                 return std::filesystem::file_size(a)
                        > std::filesystem::file_size(b);
               });
-    auto discovery_ms { std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - discovery_start)
-                           .count() };
-    std::cout << "File discovery + sort: " << discovery_ms << " ms\n";
-
     const size_t        total { files.size() };
     std::atomic<size_t> progress { 0 };
     tbb::parallel_for(
@@ -1762,25 +1628,12 @@ void analyze(operation_t op)
     process_one_file(op.msa_path);
   }
 
-  auto processing_ms { std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now() - wall_start)
-                         .count() };
-  std::cout << "File discovery + parallel per-file processing (wall time): "
-            << processing_ms << " ms\n";
-
-  auto write_start { std::chrono::steady_clock::now() };
   for (auto &[feat, lines] : accumulator)
   {
     std::string   sanitized { std::regex_replace(feat, std::regex(" "), "_") };
     std::ofstream out(output_directory + "/" + sanitized + ".txt");
     out << lines.render();
   }
-  auto write_ms { std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now() - write_start)
-                     .count() };
-  std::cout << "Final output writing (wall time): " << write_ms << " ms\n";
-
-  timing_stats::print_and_reset();
 }
 
 void render(operation_t op)
