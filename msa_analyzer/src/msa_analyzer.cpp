@@ -279,13 +279,14 @@ struct operation_t
       analyze,
       render
     } operation_type;
-    std::filesystem::path              msa_path {};
-    std::filesystem::path              isolation_executable {};
-    std::filesystem::path              spl_specification_file {};
-    size_t                             threads { 0 };
-    std::set<std::string>              atomic_node_types {};
-    std::map<std::string, std::vector<std::string>> feature_expression_lookup {};
-    std::map<std::string, size_t>      variant_name_to_system_id {};
+    std::filesystem::path msa_path {};
+    std::filesystem::path isolation_executable {};
+    std::filesystem::path spl_specification_file {};
+    size_t                threads { 0 };
+    std::set<std::string> atomic_node_types {};
+    std::map<std::string, std::vector<std::string>>
+                                  feature_expression_lookup {};
+    std::map<std::string, size_t> variant_name_to_system_id {};
 };
 
 void argument_error(char *argv[])
@@ -942,7 +943,7 @@ size_t pick_best_candidate_index(const std::vector<std::string> &raw_candidates,
   for (size_t i {}; i < raw_candidates.size(); ++i)
   {
     for (const auto &clause_literals :
-        clause_literal_sets(transform_dnf_feature(raw_candidates[i])))
+         clause_literal_sets(transform_dnf_feature(raw_candidates[i])))
     {
       if (!std::includes(clause_literals.positive.begin(),
                          clause_literals.positive.end(),
@@ -1040,7 +1041,7 @@ std::vector<std::string>
                                         const operation_t         &operation)
 {
   static std::map<std::string, std::vector<std::string>> system_feature_map {};
-  static std::mutex                                       cache_mutex {};
+  static std::mutex                                      cache_mutex {};
   std::string systems_hash { hash_systems(systems) };
 
   {
@@ -1142,15 +1143,15 @@ void analyze(operation_t op)
 
     struct column_info_t
     {
-        size_t                    col;
-        std::vector<size_t>       present;
-        std::vector<std::string>  candidates;
-        std::shared_ptr<node_t>   owner_node;
-        size_t                    owner_sys;
+        size_t                   col;
+        std::vector<size_t>      present;
+        std::vector<std::string> candidates;
+        std::shared_ptr<node_t>  owner_node;
+        size_t                   owner_sys;
     };
 
     std::vector<column_info_t> columns_info {};
-    const size_t                col_count { systems.begin()->second.tokens.size() };
+    const size_t col_count { systems.begin()->second.tokens.size() };
     for (size_t col {}; col < col_count; ++col)
     {
       std::vector<size_t> present {};
@@ -1244,8 +1245,8 @@ void analyze(operation_t op)
         {
           parent_context = literal_union(class_id->feature);
         }
-        chosen_raw = info.candidates[pick_best_candidate_index(
-            info.candidates, parent_context)];
+        chosen_raw = info.candidates[pick_best_candidate_index(info.candidates,
+                                                               parent_context)];
       }
       finalize_column(info, chosen_raw);
     }
@@ -1285,12 +1286,11 @@ void analyze(operation_t op)
             // import special-case broadcasts such a token's resolved feature
             // to every top-level class in the file, so use the union of
             // those classes' already-resolved traces as context.
-            for (const auto &top_level_class : get_top_level_class_nodes(
-                     systems.at(info.owner_sys).root))
+            for (const auto &top_level_class :
+                 get_top_level_class_nodes(systems.at(info.owner_sys).root))
             {
-              auto top_level_id {
-                top_level_class->get_child_by_tag("identifier")
-              };
+              auto top_level_id { top_level_class->get_child_by_tag(
+                  "identifier") };
               if (top_level_id != nullptr && !top_level_id->feature.empty())
               {
                 auto literals { literal_union(top_level_id->feature) };
@@ -1299,8 +1299,8 @@ void analyze(operation_t op)
             }
           }
         }
-        chosen_raw = info.candidates[pick_best_candidate_index(
-            info.candidates, parent_context)];
+        chosen_raw = info.candidates[pick_best_candidate_index(info.candidates,
+                                                               parent_context)];
       }
       finalize_column(info, chosen_raw);
     }
@@ -1379,8 +1379,7 @@ void render(operation_t op)
           systems.push_back(system_id_and_tokens.first);
         }
       }
-      const std::string feature { transform_dnf_feature(
-          get_feature_from_systems(systems, op)) };
+      const std::string feature { get_feature_from_systems(systems, op) };
       features.insert(feature);
       for (const auto &system_id_and_tokens : file.second)
       {
