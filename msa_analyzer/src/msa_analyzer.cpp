@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <oneapi/tbb/global_control.h>
+#include <optional>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -861,13 +862,13 @@ std::string transform_dnf_feature(const std::string &raw)
 struct and_clause_literals_t
 {
     std::set<std::string> positive {};
-    size_t                negated_count {};
+    std::set<std::string> negated {};
 };
 
 // Splits a single AND-clause that has already been canonicalized by
 // transform_and_feature (literals joined by "_and_", negated literals
-// prefixed with "not_") into its positive (non-negated) literal names, plus
-// a count of how many literals in the clause were negated.
+// prefixed with "not_") into its positive and negated literal names (the
+// "not_" prefix is stripped from negated literals).
 and_clause_literals_t
     literals_of_transformed_and_clause(const std::string &clause)
 {
@@ -887,7 +888,7 @@ and_clause_literals_t
   {
     if (p.starts_with("not_"))
     {
-      ++result.negated_count;
+      result.negated.insert(p.substr(4));
       continue;
     }
     result.positive.insert(p);
@@ -953,7 +954,7 @@ size_t pick_best_candidate_index(const std::vector<std::string> &raw_candidates,
         continue;
       }
       size_t extra { clause_literals.positive.size() - parent_context.size() };
-      size_t negated { clause_literals.negated_count };
+      size_t negated { clause_literals.negated.size() };
       if (!found_best || negated < best_negated
           || (negated == best_negated && extra < best_extra))
       {
@@ -964,6 +965,203 @@ size_t pick_best_candidate_index(const std::vector<std::string> &raw_candidates,
       }
     }
   }
+  return found_best ? best_index : 0;
+}
+
+// The extra AND-condition an OR-clause `d` adds on top of an OR-clause `o`,
+// if `d` is an extension of `o` (i.e. `o`'s literals, positive and negated,
+// are all present in `d`). Returns nullopt if `d` does not extend `o`.
+std::optional<and_clause_literals_t>
+    clause_extension_extra(const and_clause_literals_t &o,
+                           const and_clause_literals_t &d)
+{
+  if (!std::includes(d.positive.begin(),
+                     d.positive.end(),
+                     o.positive.begin(),
+                     o.positive.end())
+      || !std::includes(
+          d.negated.begin(), d.negated.end(), o.negated.begin(), o.negated.end()))
+  {
+    return std::nullopt;
+  }
+
+  and_clause_literals_t extra {};
+  std::set_difference(d.positive.begin(),
+                      d.positive.end(),
+                      o.positive.begin(),
+                      o.positive.end(),
+                      std::inserter(extra.positive, extra.positive.end()));
+  std::set_difference(d.negated.begin(),
+                      d.negated.end(),
+                      o.negated.begin(),
+                      o.negated.end(),
+                      std::inserter(extra.negated, extra.negated.end()));
+  return extra;
+}
+
+// Canonical string key for an and_clause_literals_t, so extra conditions
+// from different clause pairs can be compared for equality / used as a map
+// key. Mirrors transform_and_feature's convention (sorted, "not_"-prefixed,
+// "_and_"-joined); empty string means "no extra condition".
+std::string clause_literals_key(const and_clause_literals_t &clause)
+{
+  std::vector<std::string> tokens {};
+  for (const auto &lit : clause.positive)
+  {
+    tokens.push_back(lit);
+  }
+  for (const auto &lit : clause.negated)
+  {
+    tokens.push_back("not_" + lit);
+  }
+  std::sort(tokens.begin(), tokens.end());
+  std::string result {};
+  for (size_t i {}; i < tokens.size(); ++i)
+  {
+    if (i > 0)
+    {
+      result += "_and_";
+    }
+    result += tokens[i];
+  }
+  return result;
+}
+
+// Picks the raw candidate that best refines parent_clauses, where
+// parent_clauses is the already-split list of OR-clauses of the (DNF)
+// surrounding scope's feature.
+//
+// A candidate OR-clause D "extends" a parent OR-clause O when O's literals
+// (positive and negated) are all present in D; the extra literals D adds on
+// top of O are its "extra condition" for that O. A candidate is a good
+// refinement when there is a single extra condition E that is common across
+// as many of the parent's OR-clauses as possible (i.e. the candidate looks
+// like "parent ∧ E" for every disjunct) — this rewards e.g. "(A∧C) ∨ (B∧C)"
+// as a refinement of "A ∨ B" by the common extra C, over a candidate that
+// only manages to match one parent clause, or that pads itself with
+// spurious extra OR-clauses that don't correspond to any parent clause.
+//
+// Candidates are ranked by, in order: how many parent clauses are covered by
+// the best common extra condition E*; how many of the candidate's own
+// OR-clauses are NOT used to realize that coverage (fewer is better —
+// penalizes spurious/unnecessary clauses); then E*'s simplicity (fewest
+// negated literals, then fewest total literals). Falls back to the first
+// candidate if parent_clauses is empty or a candidate has no extending
+// clause at all.
+size_t pick_best_candidate_index_by_or_structure(
+    const std::vector<std::string>            &raw_candidates,
+    const std::vector<and_clause_literals_t>   &parent_clauses)
+{
+  if (parent_clauses.empty())
+  {
+    return 0;
+  }
+
+  struct candidate_score_t
+  {
+      size_t coverage {};
+      size_t leftover {};
+      size_t negated {};
+      size_t literal_count {};
+  };
+
+  bool              found_best { false };
+  size_t            best_index { 0 };
+  candidate_score_t best_score {};
+
+  for (size_t i {}; i < raw_candidates.size(); ++i)
+  {
+    std::vector<and_clause_literals_t> candidate_clauses {
+        clause_literal_sets(transform_dnf_feature(raw_candidates[i])) };
+
+    // For every extra key seen, how many distinct parent clauses it covers,
+    // and which candidate clause indices realize that coverage.
+    std::map<std::string, size_t>         extra_coverage {};
+    std::map<std::string, std::set<size_t>> extra_used_clauses {};
+    std::map<std::string, and_clause_literals_t> extra_by_key {};
+
+    for (const auto &parent_clause : parent_clauses)
+    {
+      std::set<std::string> keys_covering_this_parent_clause {};
+      for (size_t d {}; d < candidate_clauses.size(); ++d)
+      {
+        auto extra { clause_extension_extra(parent_clause,
+                                            candidate_clauses[d]) };
+        if (!extra.has_value())
+        {
+          continue;
+        }
+        std::string key { clause_literals_key(*extra) };
+        extra_by_key.emplace(key, *extra);
+        extra_used_clauses[key].insert(d);
+        keys_covering_this_parent_clause.insert(key);
+      }
+      for (const auto &key : keys_covering_this_parent_clause)
+      {
+        ++extra_coverage[key];
+      }
+    }
+
+    if (extra_coverage.empty())
+    {
+      // No candidate clause extends any parent clause at all.
+      continue;
+    }
+
+    // Pick this candidate's best common extra E*.
+    bool        found_local_best { false };
+    std::string best_key {};
+    size_t      best_coverage { 0 };
+    for (const auto &[key, coverage] : extra_coverage)
+    {
+      const auto &extra { extra_by_key.at(key) };
+      size_t      negated { extra.negated.size() };
+      size_t      literal_count { extra.positive.size() + extra.negated.size() };
+      if (!found_local_best || coverage > best_coverage
+          || (coverage == best_coverage
+              && negated < extra_by_key.at(best_key).negated.size())
+          || (coverage == best_coverage
+              && negated == extra_by_key.at(best_key).negated.size()
+              && literal_count
+                     < extra_by_key.at(best_key).positive.size()
+                           + extra_by_key.at(best_key).negated.size())
+          || (coverage == best_coverage
+              && negated == extra_by_key.at(best_key).negated.size()
+              && literal_count
+                     == extra_by_key.at(best_key).positive.size()
+                            + extra_by_key.at(best_key).negated.size()
+              && key < best_key))
+      {
+        found_local_best = true;
+        best_key          = key;
+        best_coverage     = coverage;
+      }
+    }
+
+    const auto &best_extra { extra_by_key.at(best_key) };
+    candidate_score_t score {
+        best_coverage,
+        candidate_clauses.size() - extra_used_clauses.at(best_key).size(),
+        best_extra.negated.size(),
+        best_extra.positive.size() + best_extra.negated.size() };
+
+    if (!found_best || score.coverage > best_score.coverage
+        || (score.coverage == best_score.coverage
+            && score.leftover < best_score.leftover)
+        || (score.coverage == best_score.coverage
+            && score.leftover == best_score.leftover
+            && score.negated < best_score.negated)
+        || (score.coverage == best_score.coverage
+            && score.leftover == best_score.leftover
+            && score.negated == best_score.negated
+            && score.literal_count < best_score.literal_count))
+    {
+      found_best = true;
+      best_index = i;
+      best_score = score;
+    }
+  }
+
   return found_best ? best_index : 0;
 }
 
@@ -1208,14 +1406,104 @@ void analyze(operation_t op)
       }
     };
 
-    // Candidate disambiguation (pick_best_candidate_index against ArgoUML
-    // trace hierarchy context) is disabled for now due to unexpected
-    // results; just take the first candidate, as get_feature_from_systems
-    // does. The disambiguation logic is kept in place in case it is
-    // re-enabled later.
+    // Disambiguate ambiguous system-combinations using the ArgoUML trace
+    // hierarchy. A class trace has no parent and is never disambiguated; a
+    // method trace is disambiguated against its enclosing class's trace;
+    // anything else (refinement-line-contributing tokens) is disambiguated
+    // against its enclosing method's trace, falling back to its enclosing
+    // class's trace. Column order is source-document order, but modifiers,
+    // annotations, and keywords that precede a class/method's own identifier
+    // token are still structurally inside that class/method and would be
+    // visited *before* the identifier's column resolves it — so identifier
+    // columns are fully resolved for the whole file first (class before
+    // method), and every other column is only resolved afterwards, once all
+    // identifier context is available regardless of relative column order.
+    auto pick_chosen_raw = [&](const column_info_t &info,
+                               const std::vector<and_clause_literals_t>
+                                   &parent_clauses) -> std::string
+    {
+      if (info.candidates.size() <= 1 || parent_clauses.empty())
+      {
+        return info.candidates.front();
+      }
+      return info.candidates[pick_best_candidate_index_by_or_structure(
+          info.candidates, parent_clauses)];
+    };
+
     for (auto &info : columns_info)
     {
-      finalize_column(info, info.candidates.front());
+      if (is_class_identifier(info.owner_node))
+      {
+        finalize_column(info, info.candidates.front());
+      }
+    }
+    for (auto &info : columns_info)
+    {
+      if (!is_method_identifier(info.owner_node))
+      {
+        continue;
+      }
+      std::vector<and_clause_literals_t> parent_clauses {};
+      auto class_node { get_parent_class_node(info.owner_node) };
+      auto class_id { class_node == nullptr
+                          ? nullptr
+                          : class_node->get_child_by_tag("identifier") };
+      if (class_id != nullptr && !class_id->feature.empty())
+      {
+        parent_clauses = clause_literal_sets(class_id->feature);
+      }
+      finalize_column(info, pick_chosen_raw(info, parent_clauses));
+    }
+    for (auto &info : columns_info)
+    {
+      if (is_class_identifier(info.owner_node)
+          || is_method_identifier(info.owner_node))
+      {
+        continue;
+      }
+      std::vector<and_clause_literals_t> parent_clauses {};
+      auto method_node { get_parent_method_node(info.owner_node) };
+      auto method_id { method_node == nullptr
+                           ? nullptr
+                           : method_node->get_child_by_tag("identifier") };
+      if (method_id != nullptr && !method_id->feature.empty())
+      {
+        parent_clauses = clause_literal_sets(method_id->feature);
+      }
+      else
+      {
+        auto class_node { get_parent_class_node(info.owner_node) };
+        auto class_id { class_node == nullptr
+                            ? nullptr
+                            : class_node->get_child_by_tag("identifier") };
+        if (class_id != nullptr && !class_id->feature.empty())
+        {
+          parent_clauses = clause_literal_sets(class_id->feature);
+        }
+        else if (class_node == nullptr)
+        {
+          // Genuinely top-level token (e.g. an import declaration) with no
+          // enclosing class or method at all. find_refinement_traces'
+          // import special-case broadcasts such a token's resolved feature
+          // to every top-level class in the file, so use the concatenation
+          // of those classes' already-resolved OR-clauses as context (a
+          // flattened union of DNFs is just the concatenation of their
+          // OR-clauses).
+          for (const auto &top_level_class :
+               get_top_level_class_nodes(systems.at(info.owner_sys).root))
+          {
+            auto top_level_id { top_level_class->get_child_by_tag(
+                "identifier") };
+            if (top_level_id != nullptr && !top_level_id->feature.empty())
+            {
+              auto clauses { clause_literal_sets(top_level_id->feature) };
+              parent_clauses.insert(
+                  parent_clauses.end(), clauses.begin(), clauses.end());
+            }
+          }
+        }
+      }
+      finalize_column(info, pick_chosen_raw(info, parent_clauses));
     }
 
     for (auto &[feat, nodes] : nodes_by_feature)
